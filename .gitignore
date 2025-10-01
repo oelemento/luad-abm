@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+.env
+.venv/
+venv/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+
+# Mac / editor cruft
+.DS_Store
+*.swp
+*.swo
+
+# Simulation outputs
+luad_abm/outputs/
+
+# Logs
+*.log
+
+# VSCode / IDE settings
+.vscode/
+.idea/

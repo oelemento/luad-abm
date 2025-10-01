@@ -1,0 +1,41 @@
+{
+  "name": "G4_fibrotic",
+  "description": "Fibrotic G4 phenotype with CAF-rich stroma and immune exclusion.",
+  "grid": {"width": 100, "height": 100},
+  "initial_agents": {
+    "tumor": 1200,
+    "caf": 700,
+    "macrophage": 300,
+    "cd8": 250,
+    "cd4": 200,
+    "treg": 80,
+    "tls": 1
+  },
+  "field_initialization": {
+    "ecm_mean": 0.5,
+    "ecm_ring_strength": 1.8,
+    "cxcl9_10_mean": 0.08,
+    "cxcl13_mean": 0.10,
+    "tgfb_mean": 0.22
+  },
+  "tls": {
+    "quality_initial": 0.4,
+    "quality_drift": -0.003
+  },
+  "chemokine_gain": {
+    "tls_cxcl9_10": 0.6,
+    "tls_cxcl13": 0.8,
+    "tumor_cxcl9_10": 0.08
+  },
+  "tgfb_gain": 1.4,
+  "macrophage": {
+    "polarization_bias": -0.35,
+    "initial_m2_fraction": 0.75
+  },
+  "suppression": {
+    "treg": 0.30,
+    "macrophage": 0.26
+  },
+  "ecm_penalty": 0.52,
+  "suppressive_background": 0.10
+}
