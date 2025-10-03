@@ -1,0 +1,71 @@
+{
+  "name": "GGO140",
+  "description": "Patient-derived preset for GGO140",
+  "grid": {
+    "width": 100,
+    "height": 100
+  },
+  "initial_agents": {
+    "tumor": 4669,
+    "caf": 2520,
+    "macrophage": 931,
+    "cd8": 473,
+    "cd4": 884,
+    "treg": 25,
+    "tls": 1
+  },
+  "field_initialization": {
+    "ecm_mean": 0.5,
+    "ecm_ring_strength": 1.8,
+    "cxcl9_10_mean": 0.08,
+    "cxcl13_mean": 0.1,
+    "tgfb_mean": 0.22
+  },
+  "tls": {
+    "quality_initial": 0.4,
+    "quality_drift": -0.003
+  },
+  "chemokine_gain": {
+    "tls_cxcl9_10": 0.6,
+    "tls_cxcl13": 0.8,
+    "tumor_cxcl9_10": 0.08
+  },
+  "tgfb_gain": 1.4,
+  "macrophage": {
+    "polarization_bias": -0.35,
+    "initial_m2_fraction": 0.75
+  },
+  "suppression": {
+    "treg": 0.3,
+    "macrophage": 0.26
+  },
+  "ecm_penalty": 0.52,
+  "suppressive_background": 0.1,
+  "metadata": {
+    "B": 0.4102265755159514,
+    "CD8 T": 194.26222747298863,
+    "CD4 T": 362.89319335107257,
+    "T reg": 10.2576196787013,
+    "Epi.-like": 1411.9007363996432,
+    "Epi. Prol.": 31.59346861040001,
+    "Mesen.-like": 472.260810007408,
+    "Fib.": 1033.8876620552917,
+    "Endo.": 609.2599835753624,
+    "Mast": 152.19405951641798,
+    "Mono.": 266.23704750985246,
+    "Mac.": 382.1609374810256,
+    "NK": 20.925544144550656,
+    "PMN-MDSC": 1.6409063020638055,
+    "pathology": "IAC",
+    "radio": "PNS",
+    "EGFR": "MUT",
+    "KRAS": "WT",
+    "RBM10": "WT",
+    "TP53": "MUT",
+    "Smoking Status": "Former smokes",
+    "Gender": "Male",
+    "Race": "Black or African American",
+    "ROI_area": 2.4372126071226305,
+    "Group": "Group4"
+  }
+}

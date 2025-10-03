@@ -1,0 +1,44 @@
+{
+  "name": "G1_in_situ",
+  "description": "In-situ lesion preset with low cellularity and minimal immune infiltration",
+  "grid": {
+    "width": 100,
+    "height": 100
+  },
+  "initial_agents": {
+    "tumor": 300,
+    "caf": 140,
+    "macrophage": 90,
+    "cd8": 50,
+    "cd4": 40,
+    "treg": 8,
+    "tls": 0
+  },
+  "field_initialization": {
+    "ecm_mean": 0.15,
+    "ecm_ring_strength": 0.0,
+    "cxcl9_10_mean": 0.12,
+    "cxcl13_mean": 0.05,
+    "tgfb_mean": 0.1
+  },
+  "tls": {
+    "quality_initial": 0.5,
+    "quality_drift": -0.001
+  },
+  "chemokine_gain": {
+    "tls_cxcl9_10": 0.4,
+    "tls_cxcl13": 0.4,
+    "tumor_cxcl9_10": 0.05
+  },
+  "tgfb_gain": 0.6,
+  "macrophage": {
+    "polarization_bias": -0.1,
+    "initial_m2_fraction": 0.4
+  },
+  "suppression": {
+    "treg": 0.18,
+    "macrophage": 0.15
+  },
+  "ecm_penalty": 0.2,
+  "suppressive_background": 0.03
+}

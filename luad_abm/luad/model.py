@@ -201,7 +201,8 @@ class LUADModel(mesa.Model):
 
         def place_agents(agent_type: AgentType, total: int, distribution: str = "uniform") -> None:
             attempts = 0
-            while total > 0 and attempts < total * 20:
+            remaining = total
+            while remaining > 0 and attempts < total * 20:
                 attempts += 1
                 pos = self._sample_position(distribution, center)
                 if not self.grid.is_cell_empty(pos):
@@ -209,7 +210,21 @@ class LUADModel(mesa.Model):
                 agent = self._build_agent(agent_type, pos)
                 self.grid.place_agent(agent, pos)
                 self.scheduler.add(agent)
-                total -= 1
+                remaining -= 1
+            if remaining > 0:
+                for x in range(self.grid.width):
+                    for y in range(self.grid.height):
+                        if remaining <= 0:
+                            break
+                        pos = (x, y)
+                        if not self.grid.is_cell_empty(pos):
+                            continue
+                        agent = self._build_agent(agent_type, pos)
+                        self.grid.place_agent(agent, pos)
+                        self.scheduler.add(agent)
+                        remaining -= 1
+                    if remaining <= 0:
+                        break
 
         # Tumor cluster seeded centrally
         place_agents(AgentType.TUMOR, counts.get("tumor", 0), distribution="tumor_cluster")

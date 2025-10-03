@@ -22,7 +22,7 @@ def main() -> None:
     if args.run_dirs:
         run_paths = [Path(p) for p in args.run_dirs]
     else:
-        run_paths = [p for p in Path('outputs').glob('*') if (p / 'timeseries.csv').exists()]
+        run_paths = [p for p in (ROOT / 'outputs').glob('*') if (p / 'timeseries.csv').exists()]
 
     for run_dir in run_paths:
         df = pd.read_csv(run_dir / 'timeseries.csv', index_col='tick')

@@ -192,3 +192,23 @@ usage: regenerate_plots.py [run_dirs ...]
 Regenerates `summary_plots/trajectories.png` using movie-aligned colors and styling. Provide specific output directories or leave blank to update all folders containing `timeseries.csv`.
 
 ---
+
+## 16. Patient-specific simulations
+Use real patient compositions to seed the ABM. Provide the cell-density and metadata CSVs (see `data/`):
+```bash
+../.venv/bin/python scripts/run_patient_sims.py \
+    --cells data/patient_celltype_broad_density_group.csv \
+    --meta data/patient_celltype_broad_density_group.obs.csv \
+    --preset luad_abm/config/G4_fibrotic.json \
+    --config-dir luad_abm/config/patients \
+    --outputs-dir luad_abm/outputs/patients \
+    --group Group4 \
+    --run-args '--movie-scale 8 --no-movie' \
+    --run
+```
+- Densities (per mm²) are scaled by each ROI\_area to obtain agent counts.
+- Counts are automatically rescaled if they exceed the 100×100 lattice capacity.
+- Generated configs live in `luad_abm/config/patients/patient_<ID>.json`; metadata is embedded in the JSON.
+- Omit `--run` to only generate configs; add `--patient` or another `--group` to filter cohorts.
+
+`run_patient_sims.py` can be extended with additional mappings once more agent classes are introduced.
