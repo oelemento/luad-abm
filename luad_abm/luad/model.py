@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Sequence
+from typing import Any, Dict, Iterable, Iterator, List, Sequence
 
 import mesa
 from mesa.datacollection import DataCollector
@@ -17,6 +17,44 @@ from . import agents
 from .agents import AgentType
 from .fields import FieldEngine, FieldParameters, default_field_parameters
 from .metrics import MetricsTracker, count_agents, ecm_fraction, emt_high_fraction, tls_quality_mean
+
+REGION_SEQUENCE = ("core", "cuff", "periphery")
+
+BASE_INFILTRATION = {
+    "caf": {"core": 0.08, "cuff": 0.52, "periphery": 0.40},
+    "cd8": {"core": 0.16, "cuff": 0.46, "periphery": 0.38},
+    "cd4": {"core": 0.16, "cuff": 0.44, "periphery": 0.40},
+    "treg": {"core": 0.32, "cuff": 0.44, "periphery": 0.24},
+    "macrophage": {"core": 0.22, "cuff": 0.44, "periphery": 0.34},
+    "tls": {"core": 0.02, "cuff": 0.38, "periphery": 0.60},
+    "__fallback__": {"core": 0.15, "cuff": 0.45, "periphery": 0.40},
+}
+
+GROUP_INFILTRATION_OVERRIDES = {
+    "group1": {
+        "cd8": {"core": 0.18, "cuff": 0.48, "periphery": 0.34},
+        "cd4": {"core": 0.18, "cuff": 0.46, "periphery": 0.36},
+        "caf": {"core": 0.07, "cuff": 0.5, "periphery": 0.43},
+    },
+    "group2": {
+        "cd8": {"core": 0.12, "cuff": 0.46, "periphery": 0.42},
+        "macrophage": {"core": 0.28, "cuff": 0.46, "periphery": 0.26},
+    },
+    "group3": {
+        "cd8": {"core": 0.22, "cuff": 0.50, "periphery": 0.28},
+        "cd4": {"core": 0.20, "cuff": 0.48, "periphery": 0.32},
+        "treg": {"core": 0.30, "cuff": 0.45, "periphery": 0.25},
+        "tls": {"core": 0.04, "cuff": 0.45, "periphery": 0.51},
+    },
+    "group4": {
+        "cd8": {"core": 0.03, "cuff": 0.25, "periphery": 0.72},
+        "cd4": {"core": 0.05, "cuff": 0.30, "periphery": 0.65},
+        "caf": {"core": 0.05, "cuff": 0.65, "periphery": 0.30},
+        "treg": {"core": 0.35, "cuff": 0.45, "periphery": 0.20},
+        "macrophage": {"core": 0.18, "cuff": 0.55, "periphery": 0.27},
+        "tls": {"core": 0.0, "cuff": 0.22, "periphery": 0.78},
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +70,7 @@ def default_params() -> Dict[str, float]:
         "cd8_exhaustion_rate": 0.05,
         "cd8_activation_gain": 0.12,
         "cd8_activation_decay": 0.015,
-        "pd1_kill_bonus": 0.05,
+        "pd1_kill_bonus": 0.02,
         "pd1_blockade": False,
         "tumor_proliferation_rate": 0.03,
         "emt_gain": 0.02,
@@ -51,6 +89,9 @@ def default_params() -> Dict[str, float]:
         "tls_boost_floor": 0.6,
         "tim3_quality_gain": 0.002,
         "anti_tgfb_factor": 0.5,
+        "anti_tgfb_ecm_scale": 0.55,
+        "anti_tgfb_tumor_prolif_scale": 0.4,
+        "anti_tgfb_cd8_cost_scale": 0.4,
         "anti_tgfb_caf_penalty": 0.5,
         "treg_mod_factor": 1.0,
         "suppressive_background": 0.05,
@@ -73,6 +114,7 @@ class PresetConfig:
     suppression: Dict[str, float]
     ecm_penalty: float
     suppressive_background: float
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 def load_preset(path: Path) -> PresetConfig:
@@ -107,6 +149,7 @@ def load_preset(path: Path) -> PresetConfig:
         },
         ecm_penalty=payload.get("ecm_penalty", 0.4),
         suppressive_background=payload.get("suppressive_background", 0.05),
+        metadata=payload.get("metadata", {}),
     )
 
 
@@ -166,6 +209,11 @@ class LUADModel(mesa.Model):
 
         self.metrics_tracker = metrics_tracker or MetricsTracker()
 
+        metadata_group = str(self.preset.metadata.get("Group", "") or "").strip().lower()
+        self.group_flags = {
+            "is_group4": metadata_group == "group4",
+        }
+
         self.datacollector = DataCollector(
             model_reporters={
                 "tumor_count": lambda m: count_agents(m, AgentType.TUMOR),
@@ -196,50 +244,124 @@ class LUADModel(mesa.Model):
     def _place_initial_agents(self) -> None:
         preset = self.preset
         counts = preset.initial_agents
-        width, height = preset.grid_width, preset.grid_height
-        center = (width // 2, height // 2)
+        width, height = self.grid.width, self.grid.height
+        center = np.array([width / 2.0, height / 2.0])
 
-        def place_agents(agent_type: AgentType, total: int, distribution: str = "uniform") -> None:
-            attempts = 0
-            remaining = total
-            while remaining > 0 and attempts < total * 20:
-                attempts += 1
-                pos = self._sample_position(distribution, center)
+        yy, xx = np.mgrid[0:height, 0:width]
+        dist_map = np.sqrt((xx - center[0]) ** 2 + (yy - center[1]) ** 2)
+        available_mask = np.ones((height, width), dtype=bool)
+
+        tumor_total = counts.get("tumor", 0)
+        tumor_radius = self._estimate_cluster_radius(tumor_total)
+
+        group_label = str(self.preset.metadata.get("Group", "") or "").strip().lower()
+        group_profile = GROUP_INFILTRATION_OVERRIDES.get(group_label, {})
+
+        def profile_for(agent_key: str) -> Dict[str, float]:
+            base = BASE_INFILTRATION.get(agent_key, BASE_INFILTRATION["__fallback__"]).copy()
+            override = group_profile.get(agent_key)
+            if override:
+                base = override
+            return base
+
+        def pick_positions(mask: np.ndarray, count: int, weights: np.ndarray | None = None) -> List[tuple[int, int]]:
+            if count <= 0:
+                return []
+            candidate_mask = mask & available_mask
+            coords = np.argwhere(candidate_mask)
+            if coords.size == 0:
+                return []
+            choose = min(count, len(coords))
+            probs = None
+            if weights is not None:
+                sampled_weights = weights[candidate_mask]
+                sampled_weights = np.clip(sampled_weights, 0.0, None)
+                if sampled_weights.sum() > 0:
+                    probs = sampled_weights / sampled_weights.sum()
+            if probs is not None:
+                idx = self.np_rng.choice(len(coords), size=choose, replace=False, p=probs)
+            else:
+                idx = self.np_rng.choice(len(coords), size=choose, replace=False)
+            selected: List[tuple[int, int]] = []
+            for i in idx:
+                y, x = coords[i]
+                available_mask[y, x] = False
+                selected.append((int(x), int(y)))
+            return selected
+
+        def place_agents(agent_type: AgentType, positions: List[tuple[int, int]]) -> List[tuple[int, int]]:
+            placed: List[tuple[int, int]] = []
+            for pos in positions:
                 if not self.grid.is_cell_empty(pos):
                     continue
                 agent = self._build_agent(agent_type, pos)
                 self.grid.place_agent(agent, pos)
                 self.scheduler.add(agent)
-                remaining -= 1
-            if remaining > 0:
-                for x in range(self.grid.width):
-                    for y in range(self.grid.height):
-                        if remaining <= 0:
-                            break
-                        pos = (x, y)
-                        if not self.grid.is_cell_empty(pos):
-                            continue
-                        agent = self._build_agent(agent_type, pos)
-                        self.grid.place_agent(agent, pos)
-                        self.scheduler.add(agent)
-                        remaining -= 1
-                    if remaining <= 0:
-                        break
+                placed.append(pos)
+            return placed
 
-        # Tumor cluster seeded centrally
-        place_agents(AgentType.TUMOR, counts.get("tumor", 0), distribution="tumor_cluster")
-        tumor_coords = [agent.pos for agent in self.iter_agents(AgentType.TUMOR)]
+        sigma = max(4.0, tumor_radius * 0.45)
+        tumor_weights = np.exp(-(dist_map ** 2) / (2 * sigma ** 2))
+        tumor_weights += self.np_rng.normal(0.0, 0.02, size=tumor_weights.shape)
+        tumor_weights = np.clip(tumor_weights, 0.0, None)
+        primary_mask = dist_map <= tumor_radius * 1.05
+        tumor_positions = pick_positions(primary_mask, tumor_total, tumor_weights)
+        if len(tumor_positions) < tumor_total:
+            expanded_mask = dist_map <= tumor_radius * 1.25
+            remaining = tumor_total - len(tumor_positions)
+            additional = pick_positions(expanded_mask, remaining, tumor_weights)
+            tumor_positions.extend(additional)
+        if len(tumor_positions) < tumor_total:
+            fallback = pick_positions(np.ones_like(tumor_weights, dtype=bool), tumor_total - len(tumor_positions), tumor_weights)
+            tumor_positions.extend(fallback)
+        tumor_coords = place_agents(AgentType.TUMOR, tumor_positions)
 
-        # CAFs around tumor nests
-        place_agents(AgentType.CAF, counts.get("caf", 0), distribution="peritumoral")
-        # Immune cells more broadly but biased toward TLS once seeded later
-        place_agents(AgentType.CD8, counts.get("cd8", 0), distribution="immune")
-        place_agents(AgentType.CD4, counts.get("cd4", 0), distribution="immune")
-        place_agents(AgentType.TREG, counts.get("treg", 0), distribution="immune")
-        place_agents(AgentType.MACROPHAGE, counts.get("macrophage", 0), distribution="uniform")
-        place_agents(AgentType.TLS, counts.get("tls", 0), distribution="tls")
+        core_radius = tumor_radius * 0.9
+        cuff_outer = tumor_radius * 1.3
+        region_masks = {
+            "core": dist_map <= core_radius,
+            "cuff": (dist_map > core_radius) & (dist_map <= cuff_outer),
+            "periphery": dist_map > cuff_outer,
+        }
 
-        # Initialise fields after all agents placed
+        def place_with_profile(agent_key: str, agent_type: AgentType, total: int) -> None:
+            if total <= 0:
+                return
+            profile = profile_for(agent_key)
+            fractions = np.array([profile.get(region, 0.0) for region in REGION_SEQUENCE], dtype=float)
+            if fractions.sum() <= 0:
+                fractions = np.array([0.0, 0.3, 0.7], dtype=float)
+            fractions /= fractions.sum()
+            ideal = fractions * total
+            counts_per_region = np.floor(ideal).astype(int)
+            remainder = total - counts_per_region.sum()
+            if remainder > 0:
+                order = np.argsort(ideal - counts_per_region)[::-1]
+                for idx in order[:remainder]:
+                    counts_per_region[idx] += 1
+
+            positions: List[tuple[int, int]] = []
+            spill = 0
+            for idx, region in enumerate(REGION_SEQUENCE):
+                target = counts_per_region[idx] + spill
+                if target <= 0:
+                    spill = 0
+                    continue
+                chosen = pick_positions(region_masks[region], target)
+                positions.extend(chosen)
+                spill = target - len(chosen)
+            if spill > 0:
+                overflow = pick_positions(np.ones_like(available_mask, dtype=bool), spill)
+                positions.extend(overflow)
+            place_agents(agent_type, positions)
+
+        place_with_profile("caf", AgentType.CAF, counts.get("caf", 0))
+        place_with_profile("cd8", AgentType.CD8, counts.get("cd8", 0))
+        place_with_profile("cd4", AgentType.CD4, counts.get("cd4", 0))
+        place_with_profile("treg", AgentType.TREG, counts.get("treg", 0))
+        place_with_profile("macrophage", AgentType.MACROPHAGE, counts.get("macrophage", 0))
+        place_with_profile("tls", AgentType.TLS, counts.get("tls", 0))
+
         field_init = self.preset.field_initialisation
         self.field_engine.initialize_fields(
             ecm_mean=field_init["ecm_mean"],
@@ -250,34 +372,12 @@ class LUADModel(mesa.Model):
             ecm_ring_strength=field_init.get("ecm_ring_strength", 0.0),
         )
 
-    def _sample_position(self, distribution: str, center: tuple[int, int]) -> tuple[int, int]:
-        width, height = self.grid.width, self.grid.height
-        if distribution == "tumor_cluster":
-            x = int(np.clip(self.np_rng.normal(center[0], self.grid.width * 0.08), 0, width - 1))
-            y = int(np.clip(self.np_rng.normal(center[1], self.grid.height * 0.08), 0, height - 1))
-            return x, y
-        if distribution == "peritumoral":
-            angle = self.np_rng.uniform(0, 2 * np.pi)
-            radius = self.np_rng.normal(width * 0.12, width * 0.03)
-            x = int(np.clip(center[0] + radius * np.cos(angle), 0, width - 1))
-            y = int(np.clip(center[1] + radius * np.sin(angle), 0, height - 1))
-            return x, y
-        if distribution == "tls":
-            radius = min(width, height) * 0.35
-            angle = self.np_rng.uniform(0, 2 * np.pi)
-            x = int(np.clip(center[0] + radius * np.cos(angle), 0, width - 1))
-            y = int(np.clip(center[1] + radius * np.sin(angle), 0, height - 1))
-            return x, y
-        if distribution == "immune":
-            radius = self.np_rng.gamma(shape=2.0, scale=width * 0.15)
-            angle = self.np_rng.uniform(0, 2 * np.pi)
-            x = int(np.clip(center[0] + radius * np.cos(angle), 0, width - 1))
-            y = int(np.clip(center[1] + radius * np.sin(angle), 0, height - 1))
-            return x, y
-        # uniform fallback
-        x = int(self.np_rng.integers(0, width))
-        y = int(self.np_rng.integers(0, height))
-        return x, y
+    def _estimate_cluster_radius(self, total_agents: int) -> float:
+        min_dim = min(self.grid.width, self.grid.height)
+        if total_agents <= 0:
+            return min_dim * 0.12
+        radius = np.sqrt(total_agents / np.pi)
+        return float(np.clip(radius, min_dim * 0.12, min_dim * 0.45))
 
     def _build_agent(self, agent_type: AgentType, pos: tuple[int, int]) -> agents.LUADBaseAgent:
         if agent_type == AgentType.TUMOR:
@@ -317,12 +417,13 @@ class LUADModel(mesa.Model):
             if upper == "PD1":
                 self.active_interventions["PD1"] = True
                 self.params["pd1_blockade"] = True
-                self.params["pd1_kill_bonus"] = 0.08
+                self.params["pd1_kill_bonus"] = 0.02
             elif upper in {"ANTITGFB", "ANTI_TGFB", "ANTITGFB"}:
                 self.active_interventions["antiTGFb"] = True
                 self.params["caf_tgfb_secretion"] *= 0.5
                 self.params["caf_ecm_deposition"] *= 0.6
-                self.params["ecm_penalty"] *= 0.7
+                self.params["ecm_penalty"] *= self.params["anti_tgfb_ecm_scale"]
+                self.params["tumor_proliferation_rate"] *= self.params["anti_tgfb_tumor_prolif_scale"]
             elif upper in {"TREG", "TREG_MOD", "CTLA4"}:
                 self.active_interventions["Treg_mod"] = True
                 self.params["treg_mod_factor"] = 0.5

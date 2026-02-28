@@ -9,6 +9,7 @@ Example:
 """
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -18,14 +19,14 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 LUAD_ROOT = ROOT / "luad_abm"
 CONFIG_DIR = LUAD_ROOT / "config" / "patients"
-OUTPUT_DIR = LUAD_ROOT / "outputs" / "patients"
+DEFAULT_OUTPUT_DIR = LUAD_ROOT / "outputs" / "patients"
 PLOT_DIR = LUAD_ROOT / "summary_plots"
 PLOT_DIR.mkdir(parents=True, exist_ok=True)
 PLOT_PATH = PLOT_DIR / "patient_tumor_trajectories.png"
 
 GROUP_COLORS = {
     "Group1": "#8dd3c7",
-    "Group2": "#ffffb3",
+    "Group2": "#ffd92f",
     "Group3": "#80b1d3",
     "Group4": "#fb8072",
     "Unknown": "#cccccc",
@@ -43,8 +44,8 @@ def load_patient_groups(config_dir: Path) -> dict[str, str]:
     return groups
 
 
-def load_timeseries(patient_id: str) -> pd.DataFrame | None:
-    ts_path = OUTPUT_DIR / patient_id / "timeseries.csv"
+def load_timeseries(output_dir: Path, patient_id: str) -> pd.DataFrame | None:
+    ts_path = output_dir / patient_id / "timeseries.csv"
     if not ts_path.exists():
         return None
     df = pd.read_csv(ts_path)
@@ -53,13 +54,34 @@ def load_timeseries(patient_id: str) -> pd.DataFrame | None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Summarize patient tumor trajectories")
+    parser.add_argument(
+        "--outputs",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help="Directory containing patient simulation outputs",
+    )
+    parser.add_argument(
+        "--plot-name",
+        type=str,
+        default="patient_tumor_trajectories.png",
+        help="Filename for the resulting plot",
+    )
+    args = parser.parse_args()
+
+    output_dir = args.outputs
+    if not output_dir.exists():
+        raise SystemExit(f"Output directory not found: {output_dir}")
+
+    plot_path = PLOT_DIR / args.plot_name
+
     patient_groups = load_patient_groups(CONFIG_DIR)
     if not patient_groups:
         raise SystemExit("No patient configs found. Run scripts/run_patient_sims.py first.")
 
     records = []
     for patient_id in sorted(patient_groups.keys()):
-        df = load_timeseries(patient_id)
+        df = load_timeseries(output_dir, patient_id)
         if df is None:
             continue
         df["Group"] = patient_groups[patient_id]
@@ -76,7 +98,7 @@ def main() -> None:
     for patient_id, df in traj.groupby("patient"):
         group = df["Group"].iloc[0]
         color = GROUP_COLORS.get(group, GROUP_COLORS["Unknown"])
-        ax.plot(df["tick"], df["tumor_count"], color=color, linewidth=1.8, alpha=0.85)
+        ax.plot(df["tick"], df["tumor_count"], color=color, linewidth=2.0, alpha=1.0)
 
     ax.set_title("Tumor trajectories per patient")
     ax.set_xlabel("Tick")
@@ -112,9 +134,9 @@ def main() -> None:
     )
 
     fig.tight_layout(rect=[0, 0, 0.78, 1])
-    fig.savefig(PLOT_PATH, dpi=200)
+    fig.savefig(plot_path, dpi=200)
     plt.close(fig)
-    print(f"Saved {PLOT_PATH}")
+    print(f"Saved {plot_path}")
 
 
 if __name__ == "__main__":

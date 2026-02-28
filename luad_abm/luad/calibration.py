@@ -40,8 +40,13 @@ def extract_summary_stats(model) -> Dict[str, float]:
         positions[key] = np.array([a.pos for a in agents], dtype=np.float32) if agents else np.empty((0, 2))
         total += len(agents)
 
+    # Fractions among non-tumor cells (immune-only denominator)
+    non_tumor = total - counts.get("tumor", 0)
     for key, count in counts.items():
-        stats[f"frac_{key}"] = count / total if total > 0 else 0.0
+        if key == "tumor":
+            stats[f"frac_{key}"] = count / total if total > 0 else 0.0
+        else:
+            stats[f"frac_{key}"] = count / non_tumor if non_tumor > 0 else 0.0
 
     # --- Infiltration profile (core/cuff/periphery) ---
     tumor_pos = positions.get("tumor", np.empty((0, 2)))

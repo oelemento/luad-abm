@@ -29,6 +29,8 @@ def chemotactic_move(
             continue
         chemokine = model.field_engine.field_value(field_name, candidate)
         ecm_penalty = model.field_engine.field_value("ecm", candidate) * model.params["ecm_penalty"]
+        if model.active_interventions.get("antiTGFb", False):
+            ecm_penalty *= model.params.get("anti_tgfb_cd8_cost_scale", 0.8)
         # Encourage proximity to tumor nests slightly for cytotoxic cells
         tumor_bias = 0.0
         if getattr(agent, "tumor_attraction", 0.0) > 0.0:
@@ -95,13 +97,14 @@ def compute_local_suppression(model, pos: Tuple[int, int]) -> float:
 
 
 def update_exhaustion(killer, suppression: float, params: dict) -> None:
+    increment = params["cd8_exhaustion_rate"] * (1.0 + suppression)
+    if params.get("pd1_blockade", False):
+        increment *= 0.7
     killer.exhaustion = float(np.clip(
-        killer.exhaustion + params["cd8_exhaustion_rate"] * (1.0 + suppression) - killer.activation * 0.01,
+        killer.exhaustion + increment - killer.activation * 0.01,
         0.0,
         1.0,
     ))
-    if params.get("pd1_blockade", False):
-        killer.exhaustion *= 0.5
 
 
 def reinforce_activation(killer, params: dict) -> None:

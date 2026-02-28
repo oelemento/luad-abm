@@ -112,14 +112,15 @@ def extract_dataset(dataset_dir: Path) -> pd.DataFrame:
 
         row = {"mouse_num": int(mouse_num), "mouse_group": int(mouse_group), "n_cells": int(n)}
 
-        # Cell type fractions (among all cells)
+        # Immune fraction (among all cells)
+        immune_mask = np.isin(types_m, list(IMMUNE_TYPES))
+        n_immune = immune_mask.sum()
+        row["frac_immune"] = n_immune / n if n > 0 else 0.0
+
+        # Cell type fractions (among immune cells only, for apples-to-apples with ABM)
         for ct_name in CELL_TYPES_OF_INTEREST:
             ct_count = (types_m == ct_name).sum()
-            row[f"frac_{ct_name.replace(' ', '_').lower()}"] = ct_count / n if n > 0 else 0.0
-
-        # Immune fraction
-        immune_mask = np.isin(types_m, list(IMMUNE_TYPES))
-        row["frac_immune"] = immune_mask.sum() / n if n > 0 else 0.0
+            row[f"frac_{ct_name.replace(' ', '_').lower()}"] = ct_count / n_immune if n_immune > 0 else 0.0
 
         # Infiltration profile per immune cell type
         if has_distances:

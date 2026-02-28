@@ -60,6 +60,10 @@ class EpithelialTumorAgent(LUADBaseAgent):
         self.proliferative = True
         self.alive = True
 
+    @property
+    def is_group4(self) -> bool:
+        return self.model.group_flags.get("is_group4", False)
+
     def killed(self) -> None:
         self.alive = False
 
@@ -81,6 +85,9 @@ class EpithelialTumorAgent(LUADBaseAgent):
             delta *= self.model.params["anti_tgfb_factor"]
         self.emt = float(max(0.0, min(1.0, self.emt + delta - 0.01)))
 
+        if self.is_group4 and self.emt >= 0.6:
+            self._group4_motility_step()
+
         if self.proliferative and self.model.random.random() < self.model.params["tumor_proliferation_rate"] * (1.0 - self.emt):
             self._attempt_division()
 
@@ -101,6 +108,40 @@ class EpithelialTumorAgent(LUADBaseAgent):
         )
         self.model.grid.place_agent(daughter, new_pos)
         self.model.scheduler.add(daughter)
+
+    def _group4_motility_step(self) -> None:
+        """Allow EMT-high Group4 tumor cells to locally remodel ECM and migrate."""
+        model = self.model
+        rng = model.random
+        move_prob = 0.35
+        if rng.random() > move_prob:
+            return
+        neighborhood = model.grid.get_neighborhood(self.pos, moore=True, include_center=False)
+        empty_sites = [pos for pos in neighborhood if model.grid.is_cell_empty(pos)]
+        if not empty_sites:
+            return
+        best_pos = None
+        best_score = -1e9
+        for pos in empty_sites:
+            ecm = model.field_engine.field_value("ecm", pos)
+            tgfb = model.field_engine.field_value("tgfb", pos)
+            cxcl = model.field_engine.field_value("cxcl9_10", pos)
+            tumor_neighbors = rules.local_tumor_density(model, pos)
+            score = (
+                tgfb * 0.8
+                - ecm * model.params["ecm_penalty"] * 0.5
+                - cxcl * 0.2
+                + tumor_neighbors * 0.3
+                + rng.uniform(-0.05, 0.05)
+            )
+            if score > best_score:
+                best_score = score
+                best_pos = pos
+        if best_pos is None:
+            return
+        model.grid.move_agent(self, best_pos)
+        model.field_engine.deposit("ecm", best_pos, -0.15)
+        model.field_engine.deposit("ecm", self.pos, -0.1)
 
 
 class CAF(LUADBaseAgent):
