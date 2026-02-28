@@ -22,17 +22,18 @@ PARAM_NAMES = {
     "macrophage_suppr_base": "MAC suppression",
     "suppressive_background": "Bg suppression",
     "tumor_proliferation_rate": "Tumor prolif.",
+    "snapshot_tick": "Snapshot tick",
 }
 
-# Mapping from observed fraction column names to simulated fraction column names.
-# Observed uses frac_tam; ABM uses sim_frac_macrophage.
-# Observed has frac_b but ABM has no B cells, so we skip it.
-OBS_TO_SIM_FRAC = {
-    "frac_t_cytotox": "sim_frac_t_cytotox",
-    "frac_t_helper": "sim_frac_t_helper",
-    "frac_t_reg": "sim_frac_t_reg",
-    "frac_tam": "sim_frac_macrophage",
-    # frac_b is intentionally omitted (ABM has no B cells)
+GROUP_LABELS = {1: "Ctrl", 2: "anti-PD1", 3: "anti-CTLA4", 4: "Combo"}
+GROUP_COLORS = {1: "#4477AA", 2: "#EE6677", 3: "#228833", 4: "#CCBB44"}
+
+# Shared cell types between ABM and Gaglia
+SHARED_FRACS = {
+    "frac_t_cytotox": "CD8+ T",
+    "frac_t_helper": "CD4+ T",
+    "frac_t_reg": "Treg",
+    "frac_macrophage": "Macrophage",
 }
 
 
@@ -48,38 +49,63 @@ def main():
     obs = pd.read_csv(args.obs)
     res = pd.read_csv(args.results)
 
-    top_n = max(5, int(len(res) * args.top_frac))
-    top = res.nsmallest(top_n, "distance")
+    # Use mean_distance if available (multi-group), else distance
+    dist_col = "mean_distance" if "mean_distance" in res.columns else "distance"
+    has_groups = "group" in res.columns
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    # Top parameter sets by aggregate distance
+    if has_groups:
+        agg = res.groupby("sample_idx")[dist_col].first().reset_index()
+        top_n = max(5, int(len(agg) * args.top_frac))
+        top_idxs = agg.nsmallest(top_n, dist_col)["sample_idx"].values
+        top = res[res["sample_idx"].isin(top_idxs)]
+    else:
+        top_n = max(5, int(len(res) * args.top_frac))
+        top = res.nsmallest(top_n, dist_col)
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 11))
 
     # ------------------------------------------------------------------
-    # Panel A: Observed infiltration profiles by treatment group
+    # Panel A: Observed vs simulated fractions PER GROUP (top params)
     # ------------------------------------------------------------------
     ax = axes[0, 0]
-    groups = sorted(obs["mouse_group"].unique())
-    group_labels = {1: "Ctrl", 2: "anti-PD1", 3: "anti-CTLA4", 4: "Combo"}
-    colors = {1: "#4477AA", 2: "#EE6677", 3: "#228833", 4: "#CCBB44"}
-    cell_types = ["t_cytotox", "t_helper", "t_reg"]
-    regions = ["inside", "cuff", "periphery"]
-    x_pos = np.arange(len(cell_types) * len(regions))
-    bar_width = 0.8 / len(groups)
-    for gi, g in enumerate(groups):
-        sub = obs[obs["mouse_group"] == g]
-        vals = []
-        for ct in cell_types:
-            for reg in regions:
-                col = f"infilt_{ct}_{reg}"
-                vals.append(sub[col].mean() if col in sub.columns else 0)
-        ax.bar(x_pos + gi * bar_width, vals, bar_width,
-               label=group_labels.get(g, f"G{g}"),
-               color=colors.get(g, "gray"), alpha=0.8)
-    labels = [f"{ct.split('_')[-1]}\n{reg[:3]}" for ct in cell_types for reg in regions]
-    ax.set_xticks(x_pos + bar_width * (len(groups) - 1) / 2)
-    ax.set_xticklabels(labels, fontsize=8)
-    ax.set_ylabel("Fraction of cell type")
-    ax.set_title("A. Observed infiltration (Gaglia)")
-    ax.legend(fontsize=8)
+    frac_keys = list(SHARED_FRACS.keys())
+    frac_labels = list(SHARED_FRACS.values())
+    n_frac = len(frac_keys)
+    n_groups = len(GROUP_LABELS)
+    x = np.arange(n_frac)
+    bar_w = 0.8 / (n_groups * 2)  # obs + sim per group
+
+    for gi, (g, glabel) in enumerate(GROUP_LABELS.items()):
+        color = GROUP_COLORS[g]
+        # Observed
+        obs_g = obs[obs["mouse_group"] == g]
+        obs_means = [obs_g[k].mean() if k in obs_g.columns else 0 for k in frac_keys]
+        obs_sems = [obs_g[k].std() / np.sqrt(len(obs_g)) if k in obs_g.columns else 0 for k in frac_keys]
+        offset = gi * 2 * bar_w
+        ax.bar(x + offset, obs_means, bar_w, yerr=obs_sems, capsize=2,
+               color=color, alpha=0.9, edgecolor="white",
+               label=f"{glabel} obs" if gi == 0 else f"{glabel} obs")
+
+        # Simulated (top parameter sets for this group)
+        if has_groups:
+            sim_g = top[top["group"] == g]
+        else:
+            sim_g = top
+        sim_means = [sim_g[f"sim_{k}"].mean() if f"sim_{k}" in sim_g.columns else 0 for k in frac_keys]
+        sim_sems = [sim_g[f"sim_{k}"].std() / np.sqrt(len(sim_g)) if f"sim_{k}" in sim_g.columns else 0 for k in frac_keys]
+        ax.bar(x + offset + bar_w, sim_means, bar_w, yerr=sim_sems, capsize=2,
+               color=color, alpha=0.4, edgecolor=color, hatch="//",
+               label=f"{glabel} sim" if gi == 0 else f"{glabel} sim")
+
+    ax.set_xticks(x + bar_w * (n_groups - 0.5))
+    ax.set_xticklabels(frac_labels, fontsize=9)
+    ax.set_ylabel("Fraction (shared-type)")
+    ax.set_title("A. Observed vs simulated composition (all groups)")
+    # Compact legend
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles[:4], [GROUP_LABELS[g] for g in GROUP_LABELS],
+              fontsize=7, title="solid=obs, hatch=sim", title_fontsize=7)
 
     # ------------------------------------------------------------------
     # Panel B: Inferred parameter distributions (violin plots)
@@ -87,10 +113,15 @@ def main():
     ax = axes[0, 1]
     param_keys = list(PARAM_NAMES.keys())
     positions = np.arange(len(param_keys))
+    # Use one row per sample_idx for parameter violins (deduplicate groups/seeds)
+    if has_groups:
+        param_df = top.drop_duplicates("sample_idx")
+    else:
+        param_df = top
     for i, pk in enumerate(param_keys):
-        if pk not in top.columns:
+        if pk not in param_df.columns:
             continue
-        vals = top[pk].dropna().values
+        vals = param_df[pk].dropna().values
         if len(vals) < 2:
             continue
         parts = ax.violinplot([vals], positions=[i], showmeans=True, showextrema=False)
@@ -103,53 +134,43 @@ def main():
     ax.set_title("B. Inferred parameters (top 10%)")
 
     # ------------------------------------------------------------------
-    # Panel C: Observed vs simulated cell fractions (control group)
+    # Panel C: Per-group distance comparison
     # ------------------------------------------------------------------
     ax = axes[1, 0]
-    ctrl_obs = obs[obs["mouse_group"] == 1]
-
-    # Use the explicit mapping to handle frac_tam -> sim_frac_macrophage
-    valid_pairs = []
-    for obs_col, sim_col in OBS_TO_SIM_FRAC.items():
-        if obs_col in ctrl_obs.columns and sim_col in top.columns:
-            valid_pairs.append((obs_col, sim_col))
-
-    if valid_pairs:
-        obs_cols, sim_cols = zip(*valid_pairs)
-        obs_means = [ctrl_obs[c].mean() for c in obs_cols]
-        sim_means = [top[c].mean() for c in sim_cols]
-        # Error bars: std across mice (obs) or across top parameter sets (sim)
-        obs_sems = [ctrl_obs[c].std() / np.sqrt(len(ctrl_obs)) for c in obs_cols]
-        sim_sems = [top[c].std() / np.sqrt(len(top)) for c in sim_cols]
-        x = np.arange(len(obs_cols))
-        # Display names: clean up the observed column names
-        display_names = {
-            "frac_t_cytotox": "CD8+ T",
-            "frac_t_helper": "CD4+ T",
-            "frac_t_reg": "Treg",
-            "frac_tam": "Macrophage",
-        }
-        ax.bar(x - 0.2, obs_means, 0.35, yerr=obs_sems, capsize=3,
-               label="Observed (Gaglia)", color="#4477AA")
-        ax.bar(x + 0.2, sim_means, 0.35, yerr=sim_sems, capsize=3,
-               label="Simulated (ABM)", color="#EE6677")
-        ax.set_xticks(x)
-        ax.set_xticklabels([display_names.get(c, c.replace("frac_", "").replace("_", " "))
-                            for c in obs_cols],
-                           rotation=45, ha="right", fontsize=9)
-        ax.legend(fontsize=8)
-    ax.set_ylabel("Fraction")
-    ax.set_title("C. Observed vs simulated composition")
+    if has_groups:
+        for gi, (g, glabel) in enumerate(GROUP_LABELS.items()):
+            group_dists = res[res["group"] == g]["distance"].values
+            top_group_dists = top[top["group"] == g]["distance"].values
+            parts = ax.violinplot([group_dists], positions=[gi], showmeans=True, showextrema=False)
+            for pc in parts["bodies"]:
+                pc.set_facecolor(GROUP_COLORS[g])
+                pc.set_alpha(0.5)
+            ax.scatter([gi] * len(top_group_dists), top_group_dists,
+                       c=GROUP_COLORS[g], s=10, alpha=0.7, zorder=3)
+        ax.set_xticks(range(len(GROUP_LABELS)))
+        ax.set_xticklabels([GROUP_LABELS[g] for g in GROUP_LABELS], fontsize=10)
+        ax.set_ylabel("Distance score")
+        ax.set_title("C. Per-group calibration quality")
+    else:
+        # Fallback: single histogram
+        ax.hist(res["distance"].values, bins=30, color="#4477AA", alpha=0.7, edgecolor="white")
+        ax.set_xlabel("Distance score")
+        ax.set_ylabel("Count")
+        ax.set_title("C. Distance score distribution")
 
     # ------------------------------------------------------------------
-    # Panel D: Distance score distribution
+    # Panel D: Aggregate distance distribution + top threshold
     # ------------------------------------------------------------------
     ax = axes[1, 1]
-    ax.hist(res["distance"].values, bins=30, color="#4477AA",
-            alpha=0.7, edgecolor="white")
-    ax.axvline(top["distance"].max(), color="#EE6677", linestyle="--",
+    if has_groups:
+        agg_dists = res.groupby("sample_idx")[dist_col].first().values
+    else:
+        agg_dists = res[dist_col].values
+    ax.hist(agg_dists, bins=30, color="#4477AA", alpha=0.7, edgecolor="white")
+    threshold = np.percentile(agg_dists, args.top_frac * 100)
+    ax.axvline(threshold, color="#EE6677", linestyle="--",
                label=f"Top {args.top_frac*100:.0f}% threshold")
-    ax.set_xlabel("Distance score")
+    ax.set_xlabel("Mean distance score (across groups)")
     ax.set_ylabel("Count")
     ax.set_title("D. Parameter search scores")
     ax.legend(fontsize=8)

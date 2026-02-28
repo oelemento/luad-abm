@@ -24,7 +24,7 @@ cd ~/LungCancerSim2
 python scripts/calibration_search.py \
     --obs data/gaglia_2023/gaglia_summary_stats.csv \
     --preset luad_abm/config/G3_inflammatory.json \
-    --n-samples 200 --ticks 200 --seeds 2 --workers 8 \
+    --n-samples 50 --seeds 1 --workers 8 \
     --out data/calibration_results_baseline.csv
 
 echo "Calibration complete"

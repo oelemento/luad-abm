@@ -117,10 +117,35 @@ def extract_dataset(dataset_dir: Path) -> pd.DataFrame:
         n_immune = immune_mask.sum()
         row["frac_immune"] = n_immune / n if n > 0 else 0.0
 
-        # Cell type fractions (among immune cells only, for apples-to-apples with ABM)
+        # Cell type counts
+        ct_counts = {}
         for ct_name in CELL_TYPES_OF_INTEREST:
-            ct_count = (types_m == ct_name).sum()
-            row[f"frac_{ct_name.replace(' ', '_').lower()}"] = ct_count / n_immune if n_immune > 0 else 0.0
+            ct_counts[ct_name] = int((types_m == ct_name).sum())
+
+        # Shared-type fractions: among {T cytotox, T helper, T reg, TAM} only
+        # Matches ABM denominator (both use same 4 cell types)
+        shared_types = ["T cytotox", "T helper", "T reg", "TAM"]
+        shared_total = sum(ct_counts.get(k, 0) for k in shared_types)
+        # Map TAM -> macrophage to match ABM naming
+        shared_name_map = {"T cytotox": "t_cytotox", "T helper": "t_helper",
+                           "T reg": "t_reg", "TAM": "macrophage"}
+        for ct_name in shared_types:
+            key = shared_name_map[ct_name]
+            row[f"frac_{key}"] = ct_counts[ct_name] / shared_total if shared_total > 0 else 0.0
+
+        # Ratios (denominator-independent)
+        cd8 = ct_counts.get("T cytotox", 0)
+        cd4 = ct_counts.get("T helper", 0)
+        treg = ct_counts.get("T reg", 0)
+        mac = ct_counts.get("TAM", 0)
+        row["ratio_cd8_cd4"] = cd8 / cd4 if cd4 > 0 else 0.0
+        row["ratio_cd8_treg"] = cd8 / treg if treg > 0 else 0.0
+        row["ratio_cd4_treg"] = cd4 / treg if treg > 0 else 0.0
+        row["ratio_cd8_mac"] = cd8 / mac if mac > 0 else 0.0
+
+        # Also keep full immune fractions for reference
+        for ct_name in CELL_TYPES_OF_INTEREST:
+            row[f"frac_all_{ct_name.replace(' ', '_').lower()}"] = ct_counts[ct_name] / n_immune if n_immune > 0 else 0.0
 
         # Infiltration profile per immune cell type
         if has_distances:

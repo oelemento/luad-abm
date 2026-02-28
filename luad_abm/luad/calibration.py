@@ -40,13 +40,24 @@ def extract_summary_stats(model) -> Dict[str, float]:
         positions[key] = np.array([a.pos for a in agents], dtype=np.float32) if agents else np.empty((0, 2))
         total += len(agents)
 
-    # Fractions among non-tumor cells (immune-only denominator)
-    non_tumor = total - counts.get("tumor", 0)
-    for key, count in counts.items():
-        if key == "tumor":
-            stats[f"frac_{key}"] = count / total if total > 0 else 0.0
-        else:
-            stats[f"frac_{key}"] = count / non_tumor if non_tumor > 0 else 0.0
+    # Shared-type fractions: among {CD8, CD4, Treg, Macrophage} only
+    # This ensures identical denominators between ABM and Gaglia
+    shared_keys = ["t_cytotox", "t_helper", "t_reg", "macrophage"]
+    shared_total = sum(counts.get(k, 0) for k in shared_keys)
+    for key in shared_keys:
+        stats[f"frac_{key}"] = counts[key] / shared_total if shared_total > 0 else 0.0
+
+    # Ratios (denominator-independent)
+    cd8 = counts.get("t_cytotox", 0)
+    cd4 = counts.get("t_helper", 0)
+    treg = counts.get("t_reg", 0)
+    mac = counts.get("macrophage", 0)
+    stats["ratio_cd8_cd4"] = cd8 / cd4 if cd4 > 0 else 0.0
+    stats["ratio_cd8_treg"] = cd8 / treg if treg > 0 else 0.0
+    stats["ratio_cd4_treg"] = cd4 / treg if treg > 0 else 0.0
+    stats["ratio_cd8_mac"] = cd8 / mac if mac > 0 else 0.0
+
+    stats["frac_tumor"] = counts.get("tumor", 0) / total if total > 0 else 0.0
 
     # --- Infiltration profile (core/cuff/periphery) ---
     tumor_pos = positions.get("tumor", np.empty((0, 2)))
