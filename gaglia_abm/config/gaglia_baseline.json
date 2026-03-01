@@ -1,0 +1,22 @@
+{
+  "name": "gaglia_baseline",
+  "description": "Minimal preset matched to Gaglia et al. 2023 KP LucOS CyCIF data. 5 cell types only.",
+  "grid": {"width": 100, "height": 100},
+  "initial_agents": {
+    "tumor": 1200,
+    "cd8": 421,
+    "cd4": 936,
+    "treg": 127,
+    "macrophage": 88
+  },
+  "cxcl9_10_mean": 0.12,
+  "macrophage": {
+    "polarization_bias": -0.1,
+    "initial_m2_fraction": 0.45
+  },
+  "suppression": {
+    "treg": 0.22,
+    "macrophage": 0.18
+  },
+  "suppressive_background": 0.05
+}

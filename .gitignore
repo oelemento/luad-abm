@@ -25,9 +25,15 @@ pip-delete-this-directory.txt
 
 # Simulation outputs
 luad_abm/outputs/
+outputs/
+
+# Node
+node_modules/
 
 # Logs
 *.log
+logs/
+sbi-logs/
 
 # VSCode / IDE settings
 .vscode/
