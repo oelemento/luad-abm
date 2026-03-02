@@ -44,24 +44,29 @@ STAT_KEYS = [
 # ── Parameters to infer with prior bounds ───────────────────────────────────
 PARAM_DEFS = [
     # name,                       lo,    hi
-    ("cd8_base_kill",             0.02,  0.60),   # CD8 killing efficiency (v2 ceiling hit)
-    ("pd_l1_penalty",             0.1,   0.9),    # PD-L1 suppression of killing
-    ("cd8_exhaustion_rate",       0.005, 0.15),   # exhaustion accumulation rate
-    ("cd8_activation_gain",       0.02,  0.50),   # activation boost per kill (v2 ceiling hit)
-    ("tumor_proliferation_rate",  0.005, 0.20),   # tumor division prob/tick (v2 ceiling hit)
+    ("cd8_base_kill",             0.02,  0.60),   # CD8 killing efficiency
+    # pd_l1_penalty dropped in v4 (non-identifiable in v2+v3, fixed at 0.5)
+    ("cd8_exhaustion_rate",       0.001, 0.15),   # exhaustion accumulation (v3 floor hit → widened)
+    ("cd8_activation_gain",       0.02,  0.50),   # activation boost per kill
+    ("tumor_proliferation_rate",  0.005, 0.20),   # tumor division prob/tick
     ("macrophage_suppr_base",     0.05,  0.50),   # M2 macrophage suppression
     ("suppressive_background",    0.01,  0.15),   # baseline immunosuppression
-    ("immune_base_death_rate",    0.001, 0.025),  # immune cell turnover
-    ("recruitment_rate",          0.001, 0.05),   # immune cell recruitment (v2 ceiling hit)
+    ("immune_base_death_rate",    0.0005, 0.025), # immune cell turnover (v3 floor hit → widened)
+    ("recruitment_rate",          0.001, 0.05),   # immune cell recruitment
     ("treg_suppression",          0.08,  0.45),   # Treg suppression strength
-    ("cd8_exhaustion_death_bonus", 0.005, 0.05),  # exhaustion-scaled CD8 death
-    ("treg_prolif_rate",          0.005, 0.15),   # Treg proliferation near tumor (v2 ceiling hit)
+    ("cd8_exhaustion_death_bonus", 0.001, 0.05),  # exhaustion-scaled CD8 death (v3 floor hit → widened)
+    ("treg_prolif_rate",          0.005, 0.15),   # Treg proliferation near tumor
+    ("treg_death_rate",           0.001, 0.03),   # Treg turnover/death rate (new: CD8:Treg ratio)
     ("mac_tumor_death_rate",      0.01,  0.15),   # macrophage tumor-proximity death
-    ("mac_recruit_suppression",   0.5,   8.0),    # tumor burden suppresses mac recruitment (v2 ceiling hit)
+    ("mac_recruit_suppression",   0.5,   8.0),    # tumor burden suppresses mac recruitment
     ("recruit_exhaustion_priming", 0.05, 0.6),    # CD8 recruits arrive pre-exhausted
     ("mhc_i_induction_rate",     0.005, 0.10),    # IFNg → MHC-I upregulation on tumor
     ("mhc_i_decay_rate",         0.0005, 0.01),   # MHC-I decay (immune evasion)
 ]
+# Fixed parameters (removed from inference due to non-identifiability)
+FIXED_PARAMS = {
+    "pd_l1_penalty": 0.5,  # fixed at v3 posterior mean
+}
 PARAM_NAMES = [d[0] for d in PARAM_DEFS]
 PARAM_LO = torch.tensor([d[1] for d in PARAM_DEFS], dtype=torch.float32)
 PARAM_HI = torch.tensor([d[2] for d in PARAM_DEFS], dtype=torch.float32)
@@ -113,8 +118,13 @@ def run_single_condition(params_vec: np.ndarray, interventions: list[str],
     # Apply all inferred parameters to model.params
     p = dict(zip(PARAM_NAMES, params_vec))
     for key in PARAM_NAMES:
-        if key != "treg_suppression":  # flows through PresetConfig
+        if key not in ("treg_suppression", "treg_death_rate"):  # handled elsewhere
             model.params[key] = float(p[key])
+    # Apply fixed (non-inferred) parameters
+    for key, val in FIXED_PARAMS.items():
+        model.params[key] = val
+    # Store treg_death_rate for use in Treg death logic
+    model.params["treg_death_rate"] = float(p["treg_death_rate"])
 
     for _ in range(ticks):
         model.step()
@@ -232,23 +242,43 @@ def generate_training_data(n_sims: int, ticks: int, n_workers: int,
     return theta_tensor, x_tensor
 
 
+def zscore_normalize(x: torch.Tensor, x_observed: torch.Tensor):
+    """Z-score normalize simulation outputs using training data statistics.
+
+    Returns normalized x, normalized x_observed, and (mean, std) for reference.
+    This ensures all summary statistics contribute equally to the SNPE loss
+    regardless of their natural scale (e.g., ratios ~3.5 vs fractions ~0.05).
+    """
+    x_mean = x.mean(dim=0)
+    x_std = x.std(dim=0)
+    # Avoid division by zero for constant columns
+    x_std = torch.clamp(x_std, min=1e-8)
+    x_norm = (x - x_mean) / x_std
+    x_obs_norm = (x_observed - x_mean) / x_std
+    return x_norm, x_obs_norm, x_mean, x_std
+
+
 def run_inference(theta: torch.Tensor, x: torch.Tensor,
                   x_observed: torch.Tensor, n_posterior_samples: int = 10000):
     """Train SNPE and sample from the posterior."""
     from sbi.inference import SNPE
     from sbi.utils import BoxUniform
 
+    # Z-score normalize so all stats contribute equally
+    x_norm, x_obs_norm, x_mean, x_std = zscore_normalize(x, x_observed)
+    print(f"Z-score normalized {x.shape[1]} summary statistics")
+
     prior = BoxUniform(low=PARAM_LO, high=PARAM_HI)
 
     inference = SNPE(prior=prior)
-    inference.append_simulations(theta, x)
+    inference.append_simulations(theta, x_norm)
 
     print("Training neural density estimator...")
     density_estimator = inference.train(show_train_summary=True)
     posterior = inference.build_posterior(density_estimator)
 
     print(f"Sampling {n_posterior_samples} posterior samples...")
-    samples = posterior.sample((n_posterior_samples,), x=x_observed)
+    samples = posterior.sample((n_posterior_samples,), x=x_obs_norm)
     return posterior, samples
 
 
@@ -348,7 +378,7 @@ def main():
     print(f"Observed summary stats (4 conditions): {x_observed.shape[0]} dimensions")
     print(f"Parameters to infer: {len(PARAM_NAMES)}")
 
-    checkpoint_path = out_dir / "training_data_v3.npz"
+    checkpoint_path = out_dir / "training_data_v4.npz"
 
     if not args.infer_only:
         print(f"\n=== Phase 1: Generating {args.n_sims} training simulations ===")

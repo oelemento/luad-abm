@@ -173,8 +173,10 @@ class TregCell(LUADBaseAgent):
         prolif_rate = self.model.params["treg_prolif_rate"] * tumor_dens
         if prolif_rate > 0 and self.model.random.random() < prolif_rate:
             self._attempt_division()
-        # Tregs are more resistant to death in TME (80% of base rate)
-        if self.model.random.random() < self.model.params["immune_base_death_rate"] * 0.8:
+        # Treg death: dedicated rate (inferred), defaults to 80% of base if not set
+        treg_dr = self.model.params.get("treg_death_rate",
+                                         self.model.params["immune_base_death_rate"] * 0.8)
+        if self.model.random.random() < treg_dr:
             rules.remove_immune_agent(self.model, self)
 
     def _attempt_division(self) -> None:

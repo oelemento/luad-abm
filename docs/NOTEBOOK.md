@@ -1,5 +1,37 @@
 # Lab Notebook — LungCancerSim2
 
+## 2026-03-02: v4 SBI — z-score normalization, floor widening, Treg death rate
+
+### Goal
+Address v3 posterior issues: 3 floor-hitting parameters, non-identifiable pd_l1_penalty, underestimated CD8:Treg ratio, and unequal stat scale weighting.
+
+### v3 results summary
+- 17 params, 60-dim stats, 2000 sims across 10 nodes (~4.5h total)
+- Prior widening succeeded: tumor_proliferation_rate 0.084→0.131, treg_prolif_rate 0.066→0.083
+- New MHC-I params well-constrained: induction=0.055 (fast), decay=0.002 (slow)
+- 12/17 params reasonably constrained
+- Issues: 3 floor-hitting (cd8_exhaustion_rate, immune_base_death_rate, cd8_exhaustion_death_bonus), pd_l1_penalty still flat, CD8:Treg ratio underestimated
+
+### Changes from v3 → v4
+
+1. **Z-score normalization** of summary stats before SNPE training. Ratios (~3.5) and fractions (~0.05) now contribute equally to the loss.
+
+2. **Widened floors** for 3 floor-hitting parameters:
+   - cd8_exhaustion_rate: 0.005 → **0.001**
+   - immune_base_death_rate: 0.001 → **0.0005**
+   - cd8_exhaustion_death_bonus: 0.005 → **0.001**
+
+3. **Dropped pd_l1_penalty** from inference (non-identifiable in v2+v3). Fixed at 0.5.
+
+4. **Added treg_death_rate** [0.001, 0.03] — dedicated Treg turnover to decouple CD8:Treg ratio from shared immune_base_death_rate.
+
+### v4 configuration
+- **17 parameters** (dropped pd_l1_penalty, added treg_death_rate) + 1 fixed
+- **60-dim output**, z-score normalized
+- SLURM array **2682586** (10 nodes), combine **2682587**
+
+---
+
 ## 2026-03-02: Functional markers + prior widening → v3 SBI
 
 ### Goal
