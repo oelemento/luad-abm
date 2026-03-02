@@ -4,8 +4,9 @@ Uses SNPE (Sequential Neural Posterior Estimation) from the `sbi` package
 to infer posterior distributions over mechanistic parameters given observed
 CyCIF spatial statistics from Gaglia et al. 2023 Dataset03.
 
-Joint inference: the same biological parameters must explain both the
-untreated (Group 2) and PD1+CTLA4-treated (Group 1) conditions.
+Joint inference across all 4 conditions (5wk control, 5wk treated,
+8wk control, 8wk treated): the same biological parameters must explain
+the temporal evolution and treatment response simultaneously.
 """
 from __future__ import annotations
 
@@ -34,21 +35,32 @@ STAT_KEYS = [
     "ratio_cd8_cd4", "ratio_cd8_treg",
     "infilt_t_cytotox_inside", "infilt_t_cytotox_periphery",
     "infilt_t_reg_inside", "infilt_t_reg_periphery",
+    # Functional marker stats (CyCIF-mapped)
+    "cd8_frac_pd1_pos", "cd8_frac_exhausted",
+    "cd8_frac_grzb_pos", "cd8_frac_ki67_pos",
+    "tumor_frac_b2m_pos",
 ]
 
 # ── Parameters to infer with prior bounds ───────────────────────────────────
 PARAM_DEFS = [
-    # name,                    lo,    hi,    description
-    ("cd8_base_kill",          0.02,  0.40),  # CD8 killing efficiency
-    ("pd_l1_penalty",          0.1,   0.9),   # PD-L1 suppression of killing
-    ("cd8_exhaustion_rate",    0.005, 0.15),   # exhaustion accumulation rate
-    ("cd8_activation_gain",    0.02,  0.30),   # activation boost per kill
-    ("tumor_proliferation_rate", 0.005, 0.08), # tumor division probability/tick
-    ("macrophage_suppr_base",  0.05,  0.50),   # M2 macrophage suppression
-    ("suppressive_background", 0.01,  0.15),   # baseline immunosuppression
-    ("immune_base_death_rate", 0.001, 0.015),  # immune cell turnover rate
-    ("recruitment_rate",       0.001, 0.015),  # immune cell recruitment rate
-    ("treg_suppression",       0.08,  0.45),   # Treg suppression strength
+    # name,                       lo,    hi
+    ("cd8_base_kill",             0.02,  0.60),   # CD8 killing efficiency (v2 ceiling hit)
+    ("pd_l1_penalty",             0.1,   0.9),    # PD-L1 suppression of killing
+    ("cd8_exhaustion_rate",       0.005, 0.15),   # exhaustion accumulation rate
+    ("cd8_activation_gain",       0.02,  0.50),   # activation boost per kill (v2 ceiling hit)
+    ("tumor_proliferation_rate",  0.005, 0.20),   # tumor division prob/tick (v2 ceiling hit)
+    ("macrophage_suppr_base",     0.05,  0.50),   # M2 macrophage suppression
+    ("suppressive_background",    0.01,  0.15),   # baseline immunosuppression
+    ("immune_base_death_rate",    0.001, 0.025),  # immune cell turnover
+    ("recruitment_rate",          0.001, 0.05),   # immune cell recruitment (v2 ceiling hit)
+    ("treg_suppression",          0.08,  0.45),   # Treg suppression strength
+    ("cd8_exhaustion_death_bonus", 0.005, 0.05),  # exhaustion-scaled CD8 death
+    ("treg_prolif_rate",          0.005, 0.15),   # Treg proliferation near tumor (v2 ceiling hit)
+    ("mac_tumor_death_rate",      0.01,  0.15),   # macrophage tumor-proximity death
+    ("mac_recruit_suppression",   0.5,   8.0),    # tumor burden suppresses mac recruitment (v2 ceiling hit)
+    ("recruit_exhaustion_priming", 0.05, 0.6),    # CD8 recruits arrive pre-exhausted
+    ("mhc_i_induction_rate",     0.005, 0.10),    # IFNg → MHC-I upregulation on tumor
+    ("mhc_i_decay_rate",         0.0005, 0.01),   # MHC-I decay (immune evasion)
 ]
 PARAM_NAMES = [d[0] for d in PARAM_DEFS]
 PARAM_LO = torch.tensor([d[1] for d in PARAM_DEFS], dtype=torch.float32)
@@ -98,13 +110,11 @@ def run_single_condition(params_vec: np.ndarray, interventions: list[str],
     model = LUADModel(preset=preset, interventions=interventions,
                       seed=seed, metrics_tracker=tracker)
 
-    # Apply inferred parameters to model.params
+    # Apply all inferred parameters to model.params
     p = dict(zip(PARAM_NAMES, params_vec))
-    for key in ["cd8_base_kill", "pd_l1_penalty", "cd8_exhaustion_rate",
-                "cd8_activation_gain", "tumor_proliferation_rate",
-                "macrophage_suppr_base", "suppressive_background",
-                "immune_base_death_rate", "recruitment_rate"]:
-        model.params[key] = float(p[key])
+    for key in PARAM_NAMES:
+        if key != "treg_suppression":  # flows through PresetConfig
+            model.params[key] = float(p[key])
 
     for _ in range(ticks):
         model.step()
@@ -113,37 +123,49 @@ def run_single_condition(params_vec: np.ndarray, interventions: list[str],
     return np.array([stats.get(k, 0.0) for k in STAT_KEYS], dtype=np.float32)
 
 
-def simulator(params_vec: np.ndarray, ticks: int = 120, seed: int | None = None) -> np.ndarray:
-    """Run ABM for both conditions, return concatenated summary statistics.
+TICKS_5WK = 120
+TICKS_8WK = 192
 
-    Returns a vector of length 2 * len(STAT_KEYS):
-      [control_stats..., treated_stats...]
+
+def simulator(params_vec: np.ndarray, ticks: int = 120, seed: int | None = None) -> np.ndarray:
+    """Run ABM for all 4 conditions, return concatenated summary statistics.
+
+    Returns a vector of length 4 * len(STAT_KEYS):
+      [5wk_control..., 5wk_treated..., 8wk_control..., 8wk_treated...]
     """
     if seed is None:
         seed = np.random.randint(0, 2**31)
 
-    control_stats = run_single_condition(params_vec, [], ticks, seed)
-    treated_stats = run_single_condition(params_vec, ["PD1", "CTLA4"], ticks, seed)
-    return np.concatenate([control_stats, treated_stats])
+    ctrl_5 = run_single_condition(params_vec, [], TICKS_5WK, seed)
+    trt_5 = run_single_condition(params_vec, ["PD1", "CTLA4"], TICKS_5WK, seed + 1)
+    ctrl_8 = run_single_condition(params_vec, [], TICKS_8WK, seed + 2)
+    trt_8 = run_single_condition(params_vec, ["PD1", "CTLA4"], TICKS_8WK, seed + 3)
+    return np.concatenate([ctrl_5, trt_5, ctrl_8, trt_8])
 
 
 def _worker(args):
     """Worker function for parallel simulation."""
-    idx, params_vec, ticks = args
+    import gc
+    idx, params_vec = args
     t0 = time.time()
     try:
-        x = simulator(params_vec, ticks=ticks)
+        x = simulator(params_vec)
         dt = time.time() - t0
         return idx, x, dt
     except Exception as e:
-        print(f"  Sim {idx} failed: {e}")
+        print(f"  Sim {idx} failed: {e}", flush=True)
         return idx, None, 0.0
+    finally:
+        gc.collect()
 
 
 def generate_training_data(n_sims: int, ticks: int, n_workers: int,
                            save_path: Path, resume: bool = True) -> tuple[torch.Tensor, torch.Tensor]:
-    """Generate (theta, x) training pairs for SNPE, with checkpointing."""
-    # Check for existing checkpoint
+    """Generate (theta, x) training pairs for SNPE, with checkpointing.
+
+    Uses Pool(maxtasksperchild=1) so each worker process is killed and
+    restarted after every simulation — prevents Mesa memory leaks.
+    """
     theta_all = []
     x_all = []
     start_idx = 0
@@ -153,12 +175,11 @@ def generate_training_data(n_sims: int, ticks: int, n_workers: int,
         theta_all = list(checkpoint["theta"])
         x_all = list(checkpoint["x"])
         start_idx = len(theta_all)
-        print(f"Resumed from checkpoint: {start_idx}/{n_sims} simulations done")
+        print(f"Resumed from checkpoint: {start_idx}/{n_sims} simulations done", flush=True)
         if start_idx >= n_sims:
             return (torch.tensor(np.array(theta_all), dtype=torch.float32),
                     torch.tensor(np.array(x_all), dtype=torch.float32))
 
-    # Sample parameters from prior
     remaining = n_sims - start_idx
     rng = np.random.default_rng(42 + start_idx)
     theta_new = rng.uniform(
@@ -166,36 +187,42 @@ def generate_training_data(n_sims: int, ticks: int, n_workers: int,
         size=(remaining, len(PARAM_NAMES))
     )
 
-    # Run simulations in batches
-    batch_size = max(n_workers * 2, 20)
+    # Small batches = frequent checkpoints + fresh Pool per batch
+    batch_size = n_workers * 2
     completed = start_idx
     t_start = time.time()
+    failed = 0
 
     for batch_start in range(0, remaining, batch_size):
         batch_end = min(batch_start + batch_size, remaining)
         batch_theta = theta_new[batch_start:batch_end]
-        tasks = [(start_idx + batch_start + i, batch_theta[i], ticks)
+        tasks = [(start_idx + batch_start + i, batch_theta[i])
                  for i in range(len(batch_theta))]
 
         if n_workers > 1:
-            with Pool(n_workers) as pool:
-                results = pool.map(_worker, tasks)
+            # Fresh pool per batch with maxtasksperchild=1:
+            # each worker dies after 1 sim, freeing all Mesa memory
+            with Pool(n_workers, maxtasksperchild=1) as pool:
+                results = pool.map(_worker, tasks, chunksize=1)
         else:
             results = [_worker(t) for t in tasks]
 
         for idx, x, dt in results:
             if x is not None:
-                theta_all.append(theta_new[idx - start_idx])
+                theta_all.append(batch_theta[idx - start_idx - batch_start])
                 x_all.append(x)
+            else:
+                failed += 1
 
         completed = len(theta_all)
         elapsed = time.time() - t_start
-        rate = (completed - start_idx) / elapsed if elapsed > 0 else 0
-        eta = (n_sims - completed) / rate if rate > 0 else float("inf")
-        print(f"  {completed}/{n_sims} simulations | "
-              f"{rate:.1f} sims/min | ETA {eta/60:.1f} min")
+        rate_per_min = (completed - start_idx) / (elapsed / 60) if elapsed > 0 else 0
+        eta_min = (n_sims - completed) / rate_per_min if rate_per_min > 0 else float("inf")
+        print(f"  {completed}/{n_sims} sims | "
+              f"{rate_per_min:.1f} sims/min | ETA {eta_min:.0f} min | "
+              f"{failed} failed", flush=True)
 
-        # Checkpoint
+        # Checkpoint after each batch
         np.savez(save_path,
                  theta=np.array(theta_all),
                  x=np.array(x_all))
@@ -233,7 +260,8 @@ def plot_posterior(samples: torch.Tensor, observed_stats: dict, out_dir: Path) -
     n_params = len(PARAM_NAMES)
 
     # Marginal posteriors
-    fig, axes = plt.subplots(2, 5, figsize=(20, 8))
+    n_rows = (n_params + 4) // 5  # ceil division for 5 columns
+    fig, axes = plt.subplots(n_rows, 5, figsize=(20, 4 * n_rows))
     axes = axes.flatten()
     for i, (name, lo, hi) in enumerate(PARAM_DEFS):
         ax = axes[i]
@@ -268,19 +296,25 @@ def plot_posterior(samples: torch.Tensor, observed_stats: dict, out_dir: Path) -
 
     # Posterior predictive check: run ABM with posterior mean params
     mean_params = samples_np.mean(axis=0)
-    pred_stats = simulator(mean_params, ticks=120)
-    x_obs_np = np.concatenate([observed_stats["5wk_control"]["mean"],
-                                observed_stats["5wk_treated"]["mean"]])
+    pred_stats = simulator(mean_params)
+    cond_order = ["5wk_control", "5wk_treated", "8wk_control", "8wk_treated"]
+    x_obs_np = np.concatenate([observed_stats[c]["mean"] for c in cond_order])
 
-    labels = [f"ctrl_{k}" for k in STAT_KEYS] + [f"trt_{k}" for k in STAT_KEYS]
-    fig2, ax2 = plt.subplots(figsize=(14, 5))
+    labels = []
+    for c in cond_order:
+        short = c.replace("_control", "_C").replace("_treated", "_T")
+        labels.extend([f"{short}_{k}" for k in STAT_KEYS])
+    fig2, ax2 = plt.subplots(figsize=(18, 5))
     x_pos = np.arange(len(labels))
     ax2.bar(x_pos - 0.15, x_obs_np, 0.3, label="Observed (Gaglia)", color="#e86464", alpha=0.8)
     ax2.bar(x_pos + 0.15, pred_stats, 0.3, label="Predicted (posterior mean)", color="#3399e6", alpha=0.8)
+    # Shade held-out 8wk region
+    n_5wk = 2 * len(STAT_KEYS)
+    ax2.axvspan(n_5wk - 0.5, len(labels) - 0.5, alpha=0.08, color="green")
     ax2.set_xticks(x_pos)
-    ax2.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
+    ax2.set_xticklabels(labels, rotation=45, ha="right", fontsize=6)
     ax2.set_ylabel("Value")
-    ax2.set_title("Posterior predictive check: Observed vs Predicted", fontweight="bold")
+    ax2.set_title("Posterior predictive check: 4 conditions (green = 8wk)", fontweight="bold")
     ax2.legend()
     fig2.tight_layout()
     fig2.savefig(out_dir / "posterior_predictive.png", dpi=150, bbox_inches="tight")
@@ -290,7 +324,6 @@ def plot_posterior(samples: torch.Tensor, observed_stats: dict, out_dir: Path) -
 def parse_args():
     parser = argparse.ArgumentParser(description="Bayesian inference for Gaglia ABM")
     parser.add_argument("--n-sims", type=int, default=2000, help="Number of training simulations")
-    parser.add_argument("--ticks", type=int, default=120, help="Ticks per simulation")
     parser.add_argument("--workers", type=int, default=6, help="Parallel workers")
     parser.add_argument("--out", type=str, default="outputs/bayesian_inference", help="Output directory")
     parser.add_argument("--data", type=str, default="data/gaglia_2023/gaglia_summary_stats.csv")
@@ -305,25 +338,25 @@ def main():
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load observed data
+    # Load observed data — all 4 conditions
     observed = load_observed_stats(args.data)
+    cond_order = ["5wk_control", "5wk_treated", "8wk_control", "8wk_treated"]
     x_observed = torch.tensor(
-        np.concatenate([observed["5wk_control"]["mean"],
-                        observed["5wk_treated"]["mean"]]),
+        np.concatenate([observed[c]["mean"] for c in cond_order]),
         dtype=torch.float32
     )
-    print(f"Observed summary stats (control + treated): {x_observed.shape[0]} dimensions")
+    print(f"Observed summary stats (4 conditions): {x_observed.shape[0]} dimensions")
     print(f"Parameters to infer: {len(PARAM_NAMES)}")
 
-    checkpoint_path = out_dir / "training_data.npz"
+    checkpoint_path = out_dir / "training_data_v3.npz"
 
     if not args.infer_only:
         print(f"\n=== Phase 1: Generating {args.n_sims} training simulations ===")
-        print(f"  {args.ticks} ticks/sim, {args.workers} workers")
-        print(f"  Each sim runs 2 conditions (control + treated)")
+        print(f"  {args.workers} workers")
+        print(f"  Each sim runs 4 conditions (5wk/8wk × control/treated)")
         t0 = time.time()
         theta, x = generate_training_data(
-            args.n_sims, args.ticks, args.workers, checkpoint_path
+            args.n_sims, 0, args.workers, checkpoint_path
         )
         elapsed = time.time() - t0
         print(f"  Done in {elapsed/60:.1f} min ({len(theta)} valid simulations)")

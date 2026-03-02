@@ -49,10 +49,19 @@ class TumorAgent(LUADBaseAgent):
         self.alive = False
 
     def interactions_step(self) -> None:
-        if self.model.params["pd_l1_induction_rate"] > 0 and self.model.ifng_signal[self.pos[1], self.pos[0]] > 0:
-            self.pd_l1 = min(1.0, self.pd_l1 + self.model.params["pd_l1_induction_rate"])
+        ifng = self.model.ifng_signal[self.pos[1], self.pos[0]]
+        if ifng > 0:
+            # IFNg induces both PD-L1 and MHC-I (B2m) on tumor cells
+            if self.model.params["pd_l1_induction_rate"] > 0:
+                self.pd_l1 = min(1.0, self.pd_l1 + self.model.params["pd_l1_induction_rate"])
+            mhc_induction = self.model.params.get("mhc_i_induction_rate", 0.02)
+            self.mhc_i = min(1.0, self.mhc_i + mhc_induction)
 
     def state_updates_step(self) -> None:
+        # MHC-I decays slowly (tumor immune evasion)
+        mhc_decay = self.model.params.get("mhc_i_decay_rate", 0.005)
+        self.mhc_i = max(0.1, self.mhc_i - mhc_decay)
+
         cxcl_emit = self.model.params.get("tumor_cxcl9_emission", 0.05)
         if cxcl_emit > 0:
             self.model.field_engine.deposit(self.pos, cxcl_emit)
@@ -114,10 +123,9 @@ class CD8TCell(LUADBaseAgent):
     def state_updates_step(self) -> None:
         self.activation = float(max(0.0, min(1.0, self.activation * 0.99)))
         self.recent_kills = max(0, self.recent_kills - 1)
-        # Death: base rate + bonus for terminally exhausted cells
+        # Death: base rate + scaled by exhaustion level (continuous, not threshold)
         death_rate = self.model.params["immune_base_death_rate"]
-        if self.exhaustion > self.model.params["cd8_exhaustion_death_threshold"]:
-            death_rate += self.model.params["cd8_exhaustion_death_bonus"]
+        death_rate += self.model.params["cd8_exhaustion_death_bonus"] * self.exhaustion
         if self.model.random.random() < death_rate:
             rules.remove_immune_agent(self.model, self)
 
@@ -160,8 +168,26 @@ class TregCell(LUADBaseAgent):
     def state_updates_step(self) -> None:
         factor = self.model.params.get("treg_mod_factor", 1.0) if self.model.active_interventions.get("CTLA4", False) else 1.0
         self.suppression_strength = float(max(0.05, min(0.6, self.base_suppression * factor)))
-        if self.model.random.random() < self.model.params["immune_base_death_rate"]:
+        # Tregs proliferate in tumor-proximal / suppressive regions
+        tumor_dens = rules.local_tumor_density(self.model, self.pos)
+        prolif_rate = self.model.params["treg_prolif_rate"] * tumor_dens
+        if prolif_rate > 0 and self.model.random.random() < prolif_rate:
+            self._attempt_division()
+        # Tregs are more resistant to death in TME (80% of base rate)
+        if self.model.random.random() < self.model.params["immune_base_death_rate"] * 0.8:
             rules.remove_immune_agent(self.model, self)
+
+    def _attempt_division(self) -> None:
+        empty = [
+            pos for pos in self.model.grid.get_neighborhood(self.pos, moore=True, include_center=False)
+            if self.model.grid.is_cell_empty(pos)
+        ]
+        if not empty:
+            return
+        new_pos = self.model.random.choice(empty)
+        daughter = TregCell(self.model, suppression_strength=self.base_suppression)
+        self.model.grid.place_agent(daughter, new_pos)
+        self.model.scheduler.add(daughter)
 
 
 class Macrophage(LUADBaseAgent):
@@ -184,8 +210,13 @@ class Macrophage(LUADBaseAgent):
         rules.macrophage_polarization_step(self, self.model.params)
         if self.polarization > 0:
             self.model.field_engine.deposit(self.pos, 0.05 * self.polarization)
-        # Macrophages are longer-lived; 70% of base death rate
-        if self.model.random.random() < self.model.params["immune_base_death_rate"] * 0.7:
+        # Macrophage death: base rate + tumor-proximity death (hostile TME)
+        # M2-polarized macrophages near tumor are cleared faster
+        tumor_dens = rules.local_tumor_density(self.model, self.pos)
+        m2_factor = max(0.0, (1.0 - self.polarization) * 0.5)  # higher for M2
+        death_rate = self.model.params["immune_base_death_rate"] * 0.7
+        death_rate += self.model.params["mac_tumor_death_rate"] * (tumor_dens + m2_factor * 0.3)
+        if self.model.random.random() < death_rate:
             rules.remove_immune_agent(self.model, self)
 
 

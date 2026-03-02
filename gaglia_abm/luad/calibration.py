@@ -99,6 +99,34 @@ def extract_summary_stats(model) -> Dict[str, float]:
     stats["final_tumor_count"] = counts.get("tumor", 0)
     stats["final_cd8_count"] = counts.get("t_cytotox", 0)
 
+    # Functional marker equivalents (maps to CyCIF functional phenotyping)
+    cd8_agents = list(model.iter_agents(AgentType.CD8))
+    tumor_agents = list(model.iter_agents(AgentType.TUMOR))
+    n_cd8 = len(cd8_agents)
+    n_tumor = len(tumor_agents)
+
+    if n_cd8 > 0:
+        exhaustions = np.array([a.exhaustion for a in cd8_agents])
+        activations = np.array([a.activation for a in cd8_agents])
+        # PD-1 upregulates with moderate exhaustion; TIM-3 with terminal exhaustion
+        stats["cd8_frac_pd1_pos"] = float((exhaustions > 0.4).mean())
+        stats["cd8_frac_exhausted"] = float((exhaustions > 0.8).mean())
+        # GrzB = actively cytotoxic; Ki67 = recently activated (lower threshold)
+        stats["cd8_frac_grzb_pos"] = float((activations > 0.3).mean())
+        stats["cd8_frac_ki67_pos"] = float((activations > 0.1).mean())
+    else:
+        stats["cd8_frac_pd1_pos"] = 0.0
+        stats["cd8_frac_exhausted"] = 0.0
+        stats["cd8_frac_grzb_pos"] = 0.0
+        stats["cd8_frac_ki67_pos"] = 0.0
+
+    if n_tumor > 0:
+        mhc_vals = np.array([a.mhc_i for a in tumor_agents])
+        # B2m/MHC-I: tumor starts at mhc_i~0.8 with noise, threshold 0.8 gives ~25%
+        stats["tumor_frac_b2m_pos"] = float((mhc_vals > 0.8).mean())
+    else:
+        stats["tumor_frac_b2m_pos"] = 0.0
+
     return stats
 
 

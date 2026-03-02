@@ -51,10 +51,13 @@ def default_params() -> Dict[str, float]:
         "treg_mod_factor": 1.0,
         "suppressive_background": 0.05,
         "immune_base_death_rate": 0.005,
-        "cd8_exhaustion_death_threshold": 0.85,
-        "cd8_exhaustion_death_bonus": 0.03,
+        "cd8_exhaustion_death_bonus": 0.015,
         "recruitment_rate": 0.005,
         "recruitment_chemokine_boost": 0.5,
+        "treg_prolif_rate": 0.02,
+        "mac_tumor_death_rate": 0.06,
+        "mac_recruit_suppression": 2.0,
+        "recruit_exhaustion_priming": 0.3,
     }
 
 
@@ -286,7 +289,11 @@ class LUADModel(mesa.Model):
             return agents.TumorAgent(self, mhc_i=mhc_i, pd_l1=pd_l1)
         if agent_type == AgentType.CD8:
             activation = float(np.clip(self.np_rng.normal(0.4, 0.1), 0.05, 1.0))
-            exhaustion = float(np.clip(self.np_rng.normal(0.2, 0.05), 0.0, 0.8))
+            # Recruits arrive with exhaustion primed by microenvironment
+            base_exh = 0.2
+            if hasattr(self, '_avg_cd8_exhaustion'):
+                base_exh = 0.2 + self.params.get("recruit_exhaustion_priming", 0.3) * self._avg_cd8_exhaustion
+            exhaustion = float(np.clip(self.np_rng.normal(base_exh, 0.05), 0.0, 0.8))
             return agents.CD8TCell(self, activation=activation, exhaustion=exhaustion)
         if agent_type == AgentType.CD4:
             activation = float(np.clip(self.np_rng.normal(0.35, 0.1), 0.05, 1.0))
@@ -317,6 +324,12 @@ class LUADModel(mesa.Model):
     def step(self) -> None:
         self.field_engine.begin_step()
         self.ifng_signal *= 0.6
+        # Track avg CD8 exhaustion for recruit priming
+        cd8_cells = list(self.iter_agents(AgentType.CD8))
+        if cd8_cells:
+            self._avg_cd8_exhaustion = sum(c.exhaustion for c in cd8_cells) / len(cd8_cells)
+        else:
+            self._avg_cd8_exhaustion = 0.0
         self.scheduler.step()
         self._recruit_step()
         self.field_engine.diffuse_and_decay()
@@ -330,10 +343,19 @@ class LUADModel(mesa.Model):
         boost = 1.0 + self.params["recruitment_chemokine_boost"] * avg_cxcl
         rate = self.params["recruitment_rate"]
 
+        # Tumor burden suppresses macrophage recruitment over time
+        n_tumor = count_agents(self, AgentType.TUMOR)
+        initial_tumor = self.preset.initial_agents.get("tumor", 1200)
+        tumor_expansion = max(0.0, (n_tumor - initial_tumor) / initial_tumor)
+
         for cell_key, initial_n in self.preset.initial_agents.items():
             if cell_key == "tumor":
                 continue
-            expected = rate * initial_n * boost
+            cell_rate = rate
+            # Macrophage recruitment declines as tumor burden grows
+            if cell_key == "macrophage":
+                cell_rate *= max(0.1, 1.0 - self.params["mac_recruit_suppression"] * tumor_expansion)
+            expected = cell_rate * initial_n * boost
             n_new = int(self.np_rng.poisson(expected))
             if n_new <= 0:
                 continue

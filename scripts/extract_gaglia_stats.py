@@ -19,6 +19,17 @@ CELL_TYPES_OF_INTEREST = ["T cytotox", "T helper", "T reg", "B", "TAM", "Alveola
 IMMUNE_TYPES = {"T cytotox", "T helper", "T reg", "B", "TAM", "Alveolar MAC", "DC", "Neutrophil", "NK_L", "NK_M"}
 LYMPHOCYTE_TYPES = {"T cytotox", "T helper", "T reg", "B"}
 
+# Functional marker channels (0-indexed into NormResults 32-channel arrays)
+# Positivity threshold: normalized intensity > 0 (normalization centers on threshold)
+FUNC_MARKERS = {
+    "PD-1":     {"channel": 14, "compartment": "nuc"},
+    "TIM-3":    {"channel": 13, "compartment": "nuc"},
+    "GrzB":     {"channel": 17, "compartment": "cyt"},
+    "Ki67":     {"channel": 19, "compartment": "nuc"},
+    "PD-L1":    {"channel": 29, "compartment": "cyt"},
+    "B2m":      {"channel": 30, "compartment": "cyt"},
+}
+
 # Distance bins in microns for infiltration profile
 # Core: inside tumor (negative distance = inside), Cuff: 0-50µm outside, Periphery: >50µm outside
 REGION_BINS = {"inside": (-np.inf, 0), "cuff": (0, 50), "periphery": (50, np.inf)}
@@ -81,6 +92,15 @@ def extract_dataset(dataset_dir: Path) -> pd.DataFrame:
         tumor_dist = d["Tumor"][:, 2].astype(np.float32)
     else:
         tumor_dist = np.zeros_like(x)
+
+    # --- Load normalized marker intensities ---
+    norm_file = list(quant.glob("Results_Norm_*.mat"))
+    has_func_markers = len(norm_file) > 0
+    if has_func_markers:
+        norm = sio.loadmat(str(norm_file[0]))
+        nr = norm["NormResults"][0, 0]
+        nuc_norm = nr["MedianNucNorm"]   # (n_cells, 32) int16
+        cyt_norm = nr["MedianCytNorm"]   # (n_cells, 32) int16
 
     # --- Load lymphonet data ---
     nets_file = list(quant.glob("Results_Nets_*_dist50.mat"))
@@ -169,6 +189,31 @@ def extract_dataset(dataset_dir: Path) -> pd.DataFrame:
             hist, _ = np.histogram(cd8_dist, bins=bins, density=True)
             for i, h in enumerate(hist):
                 row[f"cd8_dist_bin_{bins[i]:.0f}"] = h
+
+        # Functional marker positivity (from normalized CyCIF intensities)
+        if has_func_markers:
+            cd8_idx = np.where(mask)[0][types_m == "T cytotox"]
+            epi_idx = np.where(mask)[0][type_matrix[mask, 0] == 2]
+            n_cd8_func = len(cd8_idx)
+            n_epi = len(epi_idx)
+
+            if n_cd8_func > 0:
+                pd1_pos = nuc_norm[cd8_idx, 14] > 0
+                tim3_pos = nuc_norm[cd8_idx, 13] > 0
+                row["cd8_frac_pd1_pos"] = pd1_pos.sum() / n_cd8_func
+                row["cd8_frac_exhausted"] = (pd1_pos & tim3_pos).sum() / n_cd8_func
+                row["cd8_frac_grzb_pos"] = (cyt_norm[cd8_idx, 17] > 0).sum() / n_cd8_func
+                row["cd8_frac_ki67_pos"] = (nuc_norm[cd8_idx, 19] > 0).sum() / n_cd8_func
+            else:
+                row["cd8_frac_pd1_pos"] = 0.0
+                row["cd8_frac_exhausted"] = 0.0
+                row["cd8_frac_grzb_pos"] = 0.0
+                row["cd8_frac_ki67_pos"] = 0.0
+
+            if n_epi > 0:
+                row["tumor_frac_b2m_pos"] = (cyt_norm[epi_idx, 30] > 0).sum() / n_epi
+            else:
+                row["tumor_frac_b2m_pos"] = 0.0
 
         # Lymphonet stats
         if has_nets:
