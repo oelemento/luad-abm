@@ -44,11 +44,11 @@ STAT_KEYS = [
 # ── Parameters to infer with prior bounds ───────────────────────────────────
 PARAM_DEFS = [
     # name,                       lo,    hi
-    ("cd8_base_kill",             0.02,  0.60),   # CD8 killing efficiency
+    ("cd8_base_kill",             0.02,  0.90),   # CD8 killing efficiency (v5 ceiling hit → widened)
     # pd_l1_penalty dropped in v4 (non-identifiable in v2+v3, fixed at 0.5)
     ("cd8_exhaustion_rate",       0.001, 0.15),   # exhaustion accumulation (v3 floor hit → widened)
-    ("cd8_activation_gain",       0.02,  0.50),   # activation boost per kill
-    ("tumor_proliferation_rate",  0.005, 0.20),   # tumor division prob/tick
+    ("cd8_activation_gain",       0.02,  0.80),   # activation boost per kill (v5 ceiling hit → widened)
+    ("tumor_proliferation_rate",  0.005, 0.35),   # tumor division prob/tick (v5 ceiling hit → widened)
     ("macrophage_suppr_base",     0.05,  0.50),   # M2 macrophage suppression
     ("suppressive_background",    0.01,  0.15),   # baseline immunosuppression
     ("immune_base_death_rate",    0.0005, 0.025), # immune cell turnover (v3 floor hit → widened)
@@ -401,7 +401,7 @@ def main():
     print(f"Observed summary stats (4 conditions): {x_observed.shape[0]} dimensions")
     print(f"Parameters to infer: {len(PARAM_NAMES)}")
 
-    checkpoint_path = out_dir / "training_data_v5.npz"
+    checkpoint_path = out_dir / "training_data_v6.npz"
 
     if not args.infer_only:
         print(f"\n=== Phase 1: Generating {args.n_sims} training simulations ===")

@@ -53,7 +53,7 @@ def main():
     print(f"Total: {theta.shape[0]} simulations, {theta.shape[1]} params, {x.shape[1]} stats")
 
     # Save combined training data
-    np.savez(out_dir / "training_data_v5.npz", theta=theta, x=x)
+    np.savez(out_dir / "training_data_v6.npz", theta=theta, x=x)
 
     # Filter NaN/inf
     theta_t = torch.tensor(theta, dtype=torch.float32)

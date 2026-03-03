@@ -34,6 +34,33 @@ So treatment is only a **1-week pulse at the end**, not continuous from the star
 3. Re-run 2000 sims across 10 nodes with same v4 priors/params
 4. After fitting: use corrected posterior for early intervention counterfactuals
 
+### v5 results (completed 2026-03-03, ~4.5h)
+
+All 10 chunks completed. SNPE converged after 148 epochs (best validation: -39.07). Treatment timing fix significantly shifted posteriors:
+
+**Key parameter shifts (v4 → v5):**
+- tumor_proliferation_rate: 0.111 → **0.168** (+51%) — tumors grow faster when unchecked for 4-7 weeks
+- cd8_base_kill: 0.307 → **0.459** (+50%) — CD8s need to kill harder in just 1 week
+- cd8_activation_gain: 0.265 → **0.370** (+40%) — stronger activation needed
+- treg_death_rate: 0.007 → **0.004** (−43%) — Tregs live longer during untreated growth
+
+**New ceiling-hitting issues (3 parameters):**
+- tumor_proliferation_rate: 0.168, p95=0.197 vs ceiling 0.20
+- cd8_base_kill: 0.459, p95=0.591 vs ceiling 0.60
+- cd8_activation_gain: 0.370, p95=0.489 vs ceiling 0.50
+
+PPC: CD8:Treg ratios still underestimated (~2.5 predicted vs ~3.4 observed).
+
+### v6: widen 3 ceilings
+
+| Parameter | v5 ceiling | v6 ceiling |
+|---|---|---|
+| cd8_base_kill | 0.60 | **0.90** |
+| cd8_activation_gain | 0.50 | **0.80** |
+| tumor_proliferation_rate | 0.20 | **0.35** |
+
+SLURM array **2685871**, combine **2685872**.
+
 ### Exploration: what the model can tell us that the paper can't
 
 With correctly fitted mechanistic parameters, we can simulate counterfactual treatment schedules:

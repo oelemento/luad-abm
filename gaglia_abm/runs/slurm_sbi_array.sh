@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=sbi_v5_sim
+#SBATCH --job-name=sbi_v6_sim
 #SBATCH --partition=scu-cpu
 #SBATCH --array=0-9
 #SBATCH --nodes=1
@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32G
 #SBATCH --time=8:00:00
-#SBATCH --output=logs/sbi_v5_sim_%A_%a.out
-#SBATCH --error=logs/sbi_v5_sim_%A_%a.err
+#SBATCH --output=logs/sbi_v6_sim_%A_%a.out
+#SBATCH --error=logs/sbi_v6_sim_%A_%a.err
 
 set -eo pipefail
 source /etc/profile
@@ -25,6 +25,6 @@ python gaglia_abm/runs/sbi_worker.py \
     --n-chunks 10 \
     --n-total 2000 \
     --workers 6 \
-    --out-dir outputs/bayesian_inference_v5/chunks
+    --out-dir outputs/bayesian_inference_v6/chunks
 
 echo "=== Chunk ${SLURM_ARRAY_TASK_ID} done: $(date) ==="
