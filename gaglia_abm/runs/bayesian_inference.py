@@ -107,12 +107,20 @@ def make_preset(params_vec: np.ndarray) -> PresetConfig:
 
 
 def run_single_condition(params_vec: np.ndarray, interventions: list[str],
-                         ticks: int, seed: int) -> np.ndarray:
-    """Run one ABM simulation and return summary statistics vector."""
+                         ticks: int, seed: int,
+                         intervention_start_tick: int | None = None) -> np.ndarray:
+    """Run one ABM simulation and return summary statistics vector.
+
+    If intervention_start_tick is set, the model runs untreated until that tick,
+    then interventions are applied for the remaining ticks.  This matches the
+    Gaglia protocol where treatment is a 1-week pulse at the end.
+    """
+    # Always start with NO interventions — apply them later if delayed
+    start_interventions = [] if intervention_start_tick is not None else interventions
     preset = make_preset(params_vec)
     tracker = MetricsTracker(distance_interval=999, interaction_interval=999,
                              grid_interval=999, capture_grids=False)
-    model = LUADModel(preset=preset, interventions=interventions,
+    model = LUADModel(preset=preset, interventions=start_interventions,
                       seed=seed, metrics_tracker=tracker)
 
     # Apply all inferred parameters to model.params
@@ -126,19 +134,32 @@ def run_single_condition(params_vec: np.ndarray, interventions: list[str],
     # Store treg_death_rate for use in Treg death logic
     model.params["treg_death_rate"] = float(p["treg_death_rate"])
 
-    for _ in range(ticks):
+    for tick in range(ticks):
+        # Delayed intervention: turn on treatment at the specified tick
+        if intervention_start_tick is not None and tick == intervention_start_tick:
+            model.apply_interventions(interventions)
         model.step()
 
     stats = extract_summary_stats(model)
     return np.array([stats.get(k, 0.0) for k in STAT_KEYS], dtype=np.float32)
 
 
-TICKS_5WK = 120
-TICKS_8WK = 192
+# Timing constants (24 ticks = 1 week)
+TICKS_PER_WEEK = 24
+TICKS_5WK = 5 * TICKS_PER_WEEK   # 120
+TICKS_8WK = 8 * TICKS_PER_WEEK   # 192
+# Treatment is a 1-week pulse at the end (Gaglia protocol: 3 doses over days 0,3,6)
+TREATMENT_DURATION = 1 * TICKS_PER_WEEK  # 24 ticks = 1 week
+TRT_START_5WK = TICKS_5WK - TREATMENT_DURATION  # tick 96 (week 4)
+TRT_START_8WK = TICKS_8WK - TREATMENT_DURATION  # tick 168 (week 7)
 
 
 def simulator(params_vec: np.ndarray, ticks: int = 120, seed: int | None = None) -> np.ndarray:
     """Run ABM for all 4 conditions, return concatenated summary statistics.
+
+    Matches Gaglia protocol: treatment is a 1-week pulse at the end, not from
+    the start.  Control runs have no treatment.  Treated runs grow untreated
+    for (N-1) weeks, then receive PD1+CTLA4 for the final week.
 
     Returns a vector of length 4 * len(STAT_KEYS):
       [5wk_control..., 5wk_treated..., 8wk_control..., 8wk_treated...]
@@ -147,9 +168,11 @@ def simulator(params_vec: np.ndarray, ticks: int = 120, seed: int | None = None)
         seed = np.random.randint(0, 2**31)
 
     ctrl_5 = run_single_condition(params_vec, [], TICKS_5WK, seed)
-    trt_5 = run_single_condition(params_vec, ["PD1", "CTLA4"], TICKS_5WK, seed + 1)
+    trt_5 = run_single_condition(params_vec, ["PD1", "CTLA4"], TICKS_5WK, seed + 1,
+                                  intervention_start_tick=TRT_START_5WK)
     ctrl_8 = run_single_condition(params_vec, [], TICKS_8WK, seed + 2)
-    trt_8 = run_single_condition(params_vec, ["PD1", "CTLA4"], TICKS_8WK, seed + 3)
+    trt_8 = run_single_condition(params_vec, ["PD1", "CTLA4"], TICKS_8WK, seed + 3,
+                                  intervention_start_tick=TRT_START_8WK)
     return np.concatenate([ctrl_5, trt_5, ctrl_8, trt_8])
 
 
@@ -378,7 +401,7 @@ def main():
     print(f"Observed summary stats (4 conditions): {x_observed.shape[0]} dimensions")
     print(f"Parameters to infer: {len(PARAM_NAMES)}")
 
-    checkpoint_path = out_dir / "training_data_v4.npz"
+    checkpoint_path = out_dir / "training_data_v5.npz"
 
     if not args.infer_only:
         print(f"\n=== Phase 1: Generating {args.n_sims} training simulations ===")

@@ -1,5 +1,55 @@
 # Lab Notebook — LungCancerSim2
 
+## 2026-03-03: v5 SBI — correct treatment timing + early intervention exploration
+
+### Critical finding: v1–v4 had wrong treatment timing
+
+All previous inference runs applied treatment (PD1+CTLA4) from tick 0 (simulation start). But the Gaglia et al. 2023 paper's actual protocol (STAR Methods) was:
+
+- Tumors initiated by intratracheal lentiviral Cre at week 0
+- Tumors grow **untreated** for 5 or 8 weeks
+- Treatment: 3 doses over 7 days (200μg each antibody i.p. on days 0, 3, 6)
+- Sacrifice ~1 week after treatment start
+
+So treatment is only a **1-week pulse at the end**, not continuous from the start:
+- **5wk group**: tumor grows 4 weeks untreated → 1 week treatment → sacrifice at week 5
+- **8wk group**: tumor grows 7 weeks untreated → 1 week treatment → sacrifice at week 8
+
+(Note: "5 weeks" and "8 weeks" in the metadata refer to total time post-initiation. The paper's supplemental figures compare 6wk vs 9wk total timepoints, suggesting sacrifice may be slightly later. Using 5wk/8wk as labeled in the shared data.)
+
+### Consequences of wrong timing in v1–v4
+
+1. **Treatment effect sizes underestimated**: The model spread a small observed effect over 120-192 ticks instead of ~24 ticks. The inferred pd1_kill_bonus and treg_mod_factor are likely too weak.
+2. **Immune dynamics distorted**: In reality, the TME evolves for weeks without interference, developing exhaustion and immunosuppression. Then treatment briefly disrupts this. Our model instead had treatment shaping the TME from the beginning.
+3. **Parameter compensation**: Other parameters (exhaustion rates, recruitment, suppression) may have compensated for the wrong timing, making the posterior biologically misleading despite fitting the summary statistics.
+
+### v5 plan
+
+1. Add `intervention_start_tick` parameter to `run_single_condition()` — treatment turns on partway through simulation
+2. Correct timing:
+   - 5wk control: 120 ticks, no treatment
+   - 5wk treated: 120 ticks, treatment starts at tick 96 (week 4 → last 24 ticks = 1 week)
+   - 8wk control: 192 ticks, no treatment
+   - 8wk treated: 192 ticks, treatment starts at tick 168 (week 7 → last 24 ticks = 1 week)
+3. Re-run 2000 sims across 10 nodes with same v4 priors/params
+4. After fitting: use corrected posterior for early intervention counterfactuals
+
+### Exploration: what the model can tell us that the paper can't
+
+With correctly fitted mechanistic parameters, we can simulate counterfactual treatment schedules:
+
+| Scenario | Description | Biological question |
+|----------|-------------|-------------------|
+| **Early intervention** | Treat at week 1-2 instead of 5/8 | Is the TME more responsive before immunosuppression establishes? |
+| **Prolonged treatment** | Continuous blockade for 3-4 weeks | Does sustained treatment prevent adaptive resistance? |
+| **Optimal timing sweep** | Treat at weeks 1, 2, 3, ..., 7 | Is there a critical window for maximum efficacy? |
+| **Sequential therapy** | PD1 first (1wk) then CTLA4 (1wk) | Does order matter? |
+| **Dose duration** | 1wk vs 2wk vs 3wk treatment | Minimum effective duration? |
+
+These would take months of mouse experiments but can be explored in silico in hours with the fitted model.
+
+---
+
 ## 2026-03-02: v4 SBI — z-score normalization, floor widening, Treg death rate
 
 ### Goal
@@ -29,6 +79,128 @@ Address v3 posterior issues: 3 floor-hitting parameters, non-identifiable pd_l1_
 - **17 parameters** (dropped pd_l1_penalty, added treg_death_rate) + 1 fixed
 - **60-dim output**, z-score normalized
 - SLURM array **2682586** (10 nodes), combine **2682587**
+
+### v4 results (completed 2026-03-03, ~4h total)
+
+All 10 chunks completed (2h56m–4h06m each), combine in 4m58s. SNPE converged after 131 epochs (best validation: -23.94). 1921/2000 valid sims after NaN filtering.
+
+**Major improvement: zero wall-hitting.** All 17 parameters have posterior mass away from prior boundaries. v3's 3 floor-hitting issues are fully resolved.
+
+| Parameter | Posterior Mean | 95% CI | Prior | Notes |
+|-----------|---------------|--------|-------|-------|
+| cd8_base_kill | 0.307 ± 0.079 | [0.158, 0.468] | [0.02, 0.60] | Well-constrained |
+| cd8_exhaustion_rate | 0.027 ± 0.016 | [0.003, 0.062] | [0.001, 0.15] | Floor fix worked |
+| cd8_activation_gain | 0.265 ± 0.113 | [0.051, 0.472] | [0.02, 0.50] | Wide but centered |
+| tumor_proliferation_rate | 0.111 ± 0.015 | [0.087, 0.146] | [0.005, 0.20] | **Tightest** — well away from ceiling |
+| macrophage_suppr_base | 0.270 ± 0.105 | [0.077, 0.469] | [0.05, 0.50] | Moderate |
+| suppressive_background | 0.078 ± 0.034 | [0.017, 0.142] | [0.01, 0.15] | Consistent with v2/v3 |
+| immune_base_death_rate | 0.004 ± 0.001 | [0.002, 0.007] | [0.0005, 0.025] | Floor fix worked |
+| recruitment_rate | 0.018 ± 0.005 | [0.008, 0.028] | [0.001, 0.05] | Consistent |
+| treg_suppression | 0.278 ± 0.086 | [0.110, 0.432] | [0.08, 0.45] | Moderate–strong |
+| cd8_exhaustion_death_bonus | 0.009 ± 0.001 | [0.007, 0.011] | [0.001, 0.05] | **Very tight** — floor fix worked |
+| treg_prolif_rate | 0.120 ± 0.020 | [0.076, 0.148] | [0.005, 0.15] | Near ceiling but not hitting |
+| treg_death_rate | **0.007 ± 0.001** | [0.004, 0.009] | [0.001, 0.03] | **New param well-constrained** |
+| mac_tumor_death_rate | 0.072 ± 0.032 | [0.016, 0.136] | [0.01, 0.15] | Moderate |
+| mac_recruit_suppression | 3.77 ± 1.73 | [0.80, 7.30] | [0.5, 8.0] | Wide but centered |
+| recruit_exhaustion_priming | 0.328 ± 0.051 | [0.227, 0.426] | [0.05, 0.6] | **Now constrained** (was flat in v2/v3) |
+| mhc_i_induction_rate | 0.057 ± 0.022 | [0.014, 0.096] | [0.005, 0.10] | Fast induction |
+| mhc_i_decay_rate | 0.002 ± 0.001 | [0.001, 0.003] | [0.0005, 0.01] | Slow decay (immune evasion) |
+
+**Key improvements over v3:**
+- recruit_exhaustion_priming now well-constrained at 0.33 (was flat) — z-score normalization fixed the scale imbalance
+- cd8_exhaustion_death_bonus extremely tight: 0.009 [0.007, 0.011] — data strongly constrains this
+- treg_death_rate well-identified at 0.007, much lower than immune_base_death_rate (0.004) — Tregs die ~1.6× faster than other immune cells, balancing their proliferative advantage
+
+**Remaining issues:**
+- 8wk CD8:Treg ratio now slightly overpredicted (was underpredicted in v2/v3)
+- mac_recruit_suppression still wide — macrophage dynamics remain hardest to pin down
+
+### Treatment mechanism analysis (posterior mean params)
+
+Ran posterior mean through all 4 conditions (5wk control, 5wk treated, 8wk control, 8wk treated) with 169 ticks. Key findings:
+
+**1. Treatment slows but does not eliminate tumor growth (~20% reduction)**
+
+| Condition | Tumor count | Immune total | CD8 | Treg |
+|-----------|------------|-------------|-----|------|
+| 5wk control | 1414 | 222 | 59 | 26 |
+| 5wk treated | 1262 | 264 | 82 | 29 |
+| 8wk control | 1752 | 182 | 42 | 42 |
+| 8wk treated | 1633 | 195 | 51 | 36 |
+
+**2. Primary mechanism: CD8 activation and infiltration, NOT Treg depletion**
+
+| Functional marker | 5wk ctrl | 5wk tx | Δ | Interpretation |
+|---|---|---|---|---|
+| CD8 GrzB+ (cytotoxic) | 0.35 | 0.54 | +54% | More active killers |
+| CD8 PD-1+ (exhaustion marker) | 0.60 | 0.47 | −22% | Less exhaustion |
+| CD8 Ki67+ (proliferating) | 0.76 | 0.82 | +8% | Maintained cycling |
+| Tumor B2m+ (MHC-I) | 0.72 | 0.82 | +14% | More antigen presentation |
+
+Anti-PD1 primarily works by:
+- Boosting CD8 cytotoxic capacity (GrzB+ up 54%)
+- Reducing exhaustion (PD-1+ down 22%)
+- Enabling deeper CD8 infiltration into tumor core
+
+Anti-CTLA4 contributes by reducing Treg suppression strength (not depleting Tregs — Treg counts actually increase due to continued tumor-proximity proliferation).
+
+**3. 8-week adaptive resistance**
+
+By 8 weeks, tumors recover partially:
+- Treg accumulation outpaces CD8 maintenance (Treg:CD8 ratio worsens)
+- CD8 exhaustion increases despite treatment
+- Tumor expands, creating more suppressive microenvironment
+- Macrophages decline further due to tumor-driven attrition
+
+This matches the clinical observation that checkpoint immunotherapy shows initial response followed by acquired resistance in many patients.
+
+### Tick-to-time mapping
+
+The model uses **24 ticks per week** (1 tick ≈ 7 hours):
+- 5-week timepoint: tick 120
+- 8-week timepoint: tick 192
+- Treatment window (2 weeks pre-sacrifice): starts at tick 72 (5wk) or tick 144 (8wk)
+
+**Parameter rates in real time:**
+
+| Parameter | Per-tick rate | Per-day rate | Per-week rate | Interpretation |
+|---|---|---|---|---|
+| tumor_proliferation_rate | 0.111 | 0.37 | 2.6 | Each tumor cell divides ~2-3× per week |
+| immune_base_death_rate | 0.004 | 0.014 | 0.10 | ~10% immune cell turnover/week |
+| treg_death_rate | 0.007 | 0.023 | 0.16 | ~16% Treg turnover/week |
+| cd8_exhaustion_rate | 0.027 | 0.091 | 0.64 | CD8 substantially exhausted in ~10 days |
+| treg_prolif_rate | 0.120 | 0.40 | 2.8 | Tregs near tumor divide 2-3×/week |
+
+**Important caveat:** The 24 ticks/week mapping is a convention chosen to match the Gaglia experimental timepoints (5 weeks and 8 weeks post-tumor establishment). The model starts from an already-established tumor mass, not from tumor initiation. The tick-to-time relationship is not mechanistically derived — it simply ensures the simulation duration spans the experimental observation window.
+
+### Output files (v4)
+- `outputs/bayesian_inference_v4/posterior_marginals.png` — 17-panel posterior distributions
+- `outputs/bayesian_inference_v4/posterior_predictive.png` — observed vs predicted (4 conditions)
+- `outputs/bayesian_inference_v4/posterior_summary.csv` — parameter estimates with 95% CIs
+- `outputs/bayesian_inference_v4/posterior_samples.npy` — 10,000 × 17 posterior samples
+- `outputs/bayesian_inference_v4/training_data_v4.npz` — 2000 × 17 (theta) + 2000 × 60 (x)
+
+### Distributed SBI infrastructure
+
+Built for v3, reused for v4. Reduces wall-clock from ~31h (single node) to ~4h (10 nodes):
+
+- `gaglia_abm/runs/sbi_worker.py` — generates chunk of (theta, x) pairs with deterministic RNG
+- `gaglia_abm/runs/sbi_combine.py` — merges chunks, filters NaN/Inf, runs SNPE
+- `gaglia_abm/runs/slurm_sbi_array.sh` — 10-node SLURM array (16 CPUs, 32G, 8h each)
+- `gaglia_abm/runs/slurm_sbi_combine.sh` — dependent combine job (8 CPUs, 32G, 2h)
+
+Submission pattern:
+```bash
+JOB=$(sbatch --parsable slurm_sbi_array.sh)
+sbatch --dependency=afterok:$JOB slurm_sbi_combine.sh
+```
+
+### Next steps
+- Fix 8wk CD8:Treg overprediction — may need condition-specific Treg dynamics
+- Improve PPC: use 50+ posterior samples instead of posterior mean
+- Consider adding CD4 helper infiltration stats
+- Explore sensitivity analysis around posterior mean
+- Run longer simulations (12+ weeks) to predict treatment durability
 
 ---
 
