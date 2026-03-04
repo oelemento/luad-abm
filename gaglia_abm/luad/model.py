@@ -321,6 +321,20 @@ class LUADModel(mesa.Model):
                 self.active_interventions["CTLA4"] = True
                 self.params["treg_mod_factor"] = 0.5
 
+    def remove_interventions(self, interventions: Sequence[str]) -> None:
+        for name in interventions:
+            key = name.strip()
+            if not key:
+                continue
+            upper = key.upper()
+            if upper == "PD1":
+                self.active_interventions.pop("PD1", None)
+                self.params["pd1_blockade"] = False
+                self.params["pd1_kill_bonus"] = 0.0
+            elif upper in {"CTLA4", "TREG", "TREG_MOD"}:
+                self.active_interventions.pop("CTLA4", None)
+                self.params["treg_mod_factor"] = 1.0
+
     def step(self) -> None:
         self.field_engine.begin_step()
         self.ifng_signal *= 0.6

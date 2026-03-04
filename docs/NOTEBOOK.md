@@ -1,5 +1,79 @@
 # Lab Notebook — LungCancerSim2
 
+## 2026-03-04: Treatment timing sweep — two protocols compared
+
+### Motivation
+
+With v6 posterior (correct Gaglia treatment timing, no ceiling-hitting), we ask: **what if treatment started earlier?** The Gaglia protocol treats for 1 week at the end (week 7→8). We simulate treatment starting at weeks 1–7 and compare tumor burden at the 8-week endpoint.
+
+### Protocol correction
+
+Initial sweep applied treatment **continuously from start week through endpoint** — confounding timing with duration (week 1 = 7 weeks of treatment, week 7 = 1 week). Re-ran with a **1-week pulse at each start time** to isolate the timing effect. Added `remove_interventions()` to `LUADModel` for treatment withdrawal.
+
+### Experiment 1: Continuous treatment (treatment ON from start week to week 8)
+
+- Script: `scripts/treatment_timing_sweep.py` (before pulse fix)
+- Cluster: Cayuga job 2685954, 2h38m on 16 CPUs
+- Seeds: 20 per condition, 160 total simulations
+
+| Treatment Start | Tumor (mean±sd) | CD8 | Treg | CD8:Treg | Tumor Δ% |
+|---|---|---|---|---|---|
+| No treatment | 1298 ± 578 | 1087 | 398 | 2.73 | — |
+| **Week 1** | **658 ± 437** | 1087 | 385 | 2.84 | **−49.3%** |
+| Week 2 | 830 ± 607 | 1091 | 388 | 2.82 | −36.1% |
+| Week 3 | 1016 ± 551 | 1096 | 403 | 2.73 | −21.7% |
+| Week 4 | 1087 ± 552 | 1093 | 393 | 2.79 | −16.3% |
+| Week 5 | 1141 ± 559 | 1089 | 401 | 2.73 | −12.1% |
+| Week 6 | 1210 ± 528 | 1098 | 406 | 2.71 | −6.8% |
+| **Week 7** (Gaglia) | **1257 ± 564** | 1088 | 408 | 2.67 | **−3.2%** |
+
+Clear monotonic trend: earlier (=longer) treatment → more tumor reduction. Week 1 start halves the tumor. But this confounds timing with duration.
+
+### Experiment 2: 1-week pulse (matching Gaglia protocol duration)
+
+- Script: `scripts/treatment_timing_sweep.py` (with `intervention_duration_ticks=TICKS_PER_WEEK`)
+- Cluster: Cayuga job 2686022, 2h50m on 16 CPUs
+- Seeds: 20 per condition, 160 total simulations
+
+| Treatment Start | Tumor (mean±sd) | CD8 | Treg | CD8:Treg | Tumor Δ% |
+|---|---|---|---|---|---|
+| No treatment | 1298 ± 578 | 1087 | 398 | 2.73 | — |
+| Week 1 | 1208 ± 614 | 1092 | 392 | 2.80 | −6.9% |
+| **Week 2** | **1114 ± 624** | 1091 | 390 | 2.81 | **−14.2%** |
+| Week 3 | 1321 ± 592 | 1090 | 400 | 2.73 | +1.8% |
+| Week 4 | 1250 ± 588 | 1086 | 390 | 2.80 | −3.7% |
+| Week 5 | 1208 ± 554 | 1088 | 400 | 2.73 | −7.0% |
+| Week 6 | 1249 ± 543 | 1095 | 405 | 2.71 | −3.8% |
+| Week 7 (Gaglia) | 1257 ± 564 | 1088 | 408 | 2.67 | −3.2% |
+
+### Comparison of the two protocols
+
+1. **Continuous treatment is dramatically more effective** — week 1 continuous gives −49% vs week 1 pulse gives only −7%. Most of the benefit comes from treatment *duration*, not timing alone.
+2. **For a fixed 1-week pulse, week 2 is optimal** — 14.2% reduction, the only clearly beneficial window. Week 3 is paradoxically neutral (+1.8%), suggesting a timing where treatment may disrupt an ongoing immune response.
+3. **Late pulse treatment is marginal regardless of timing** — weeks 5–7 all give ~3–7% reduction, consistent with Gaglia's observed modest treatment effects.
+4. **Immune cell counts invariant across all conditions** — CD8 (~1090) and Treg (~400) are nearly identical. Treatment affects CD8 killing efficiency, not immune cell numbers.
+5. **High stochastic variance** (sd ~550–624) dominates — timing effects are small relative to seed-to-seed variability, consistent with the heterogeneous clinical response to checkpoint blockade.
+
+### Clinical interpretation
+
+The continuous protocol is closer to clinical checkpoint blockade (patients receive treatment every 2–4 weeks for months). The 1-week pulse matches the Gaglia mouse protocol. The comparison suggests that **treatment duration matters more than timing** — a sustained course of immunotherapy provides cumulative benefit that a single pulse cannot achieve, regardless of when it's given.
+
+### Limitation: monotherapy data unavailable
+
+Gaglia Dataset03 only has combo PD1+CTLA4 vs control (4 groups: 5wk/8wk × treated/control, 6 mice each). No PD1-alone or CTLA4-alone arms. The individual intervention parameters (`pd1_kill_bonus=0.02`, `treg_mod_factor=0.5`) are fixed assumptions, not inferred. Monotherapy or sequencing predictions would require external calibration data.
+
+### Output files
+
+- `outputs/treatment_timing_sweep/sweep_results.npz` — 1-week pulse results (Experiment 2)
+- `outputs/treatment_timing_sweep/treatment_timing_sweep.png` — 4-panel summary figure (Experiment 2)
+- Experiment 1 results were overwritten by Experiment 2
+
+### SLURM note
+
+Cayuga SLURM upgraded to v25.05.0 but login nodes still have old v22.05.2 in default PATH. Must use full path: `/opt/ohpc/pub/software/slurm/25.05.0/bin/sbatch`.
+
+---
+
 ## 2026-03-03: v5 SBI — correct treatment timing + early intervention exploration
 
 ### Critical finding: v1–v4 had wrong treatment timing
@@ -60,6 +134,36 @@ PPC: CD8:Treg ratios still underestimated (~2.5 predicted vs ~3.4 observed).
 | tumor_proliferation_rate | 0.20 | **0.35** |
 
 SLURM array **2685871**, combine **2685872**.
+
+### v6 results (completed 2026-03-03, ~5.5h)
+
+All 10 chunks completed (298-327 min each). SNPE converged after 122 epochs (best validation: -36.35). **Zero wall-hitting — best posterior yet.**
+
+**All 3 ceiling issues resolved:**
+- cd8_base_kill: 0.459 (at wall) → **0.610** [0.376, 0.844] — found natural home
+- tumor_proliferation_rate: 0.168 (at wall) → **0.204** [0.129, 0.276] — centered
+- cd8_activation_gain: 0.370 (at wall) → **0.383** [0.068, 0.718] — barely moved, ceiling wasn't constraining
+
+**Full v4 → v6 shift (treatment timing + prior widening):**
+
+| Parameter | v4 (wrong timing) | v6 (correct) | Change | Interpretation |
+|---|---|---|---|---|
+| cd8_base_kill | 0.307 | 0.610 | +99% | CD8s must kill hard in 1 week |
+| tumor_proliferation_rate | 0.111 | 0.204 | +84% | Tumors grow unchecked for weeks |
+| cd8_exhaustion_rate | 0.027 | 0.016 | −41% | Exhaustion was proxying for timing |
+| cd8_exhaustion_death_bonus | 0.009 | 0.006 | −35% | Less exhaustion-driven death |
+| recruit_exhaustion_priming | 0.328 | 0.221 | −33% | Recruits less pre-exhausted |
+| treg_prolif_rate | 0.120 | 0.085 | −29% | Less aggressive Treg accumulation |
+
+**Key biological rates (24 ticks/week):**
+- Tumor cells divide almost daily (0.204/tick → 4.9/week)
+- 61% CD8 kill probability per encounter (before modifiers)
+- CD8s reach substantial exhaustion in ~2-3 weeks
+- Tregs near tumor double every ~3.5 days (prolif 2.0/wk vs death 0.11/wk)
+
+**PPC:** 5wk conditions well-matched. 8wk control good. 8wk treated CD8:Treg ratio overpredicted (model underestimates adaptive resistance at late timepoints).
+
+**Output files:** `outputs/bayesian_inference_v6/posterior_{marginals,predictive}.png`, `posterior_summary.csv`, `posterior_samples.npy`
 
 ### Exploration: what the model can tell us that the paper can't
 
