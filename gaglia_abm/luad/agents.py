@@ -176,6 +176,8 @@ class TregCell(LUADBaseAgent):
         # Treg death: dedicated rate (inferred), defaults to 80% of base if not set
         treg_dr = self.model.params.get("treg_death_rate",
                                          self.model.params["immune_base_death_rate"] * 0.8)
+        if self.model.active_interventions.get("CTLA4", False):
+            treg_dr += self.model.params.get("ctla4_treg_death_bonus", 0.0)
         if self.model.random.random() < treg_dr:
             rules.remove_immune_agent(self.model, self)
 

@@ -58,6 +58,7 @@ def default_params() -> Dict[str, float]:
         "mac_tumor_death_rate": 0.06,
         "mac_recruit_suppression": 2.0,
         "recruit_exhaustion_priming": 0.3,
+        "ctla4_treg_death_bonus": 0.0,
     }
 
 
@@ -320,6 +321,10 @@ class LUADModel(mesa.Model):
             elif upper in {"CTLA4", "TREG", "TREG_MOD"}:
                 self.active_interventions["CTLA4"] = True
                 self.params["treg_mod_factor"] = 0.5
+            elif upper == "CTLA4_ADCC":
+                self.active_interventions["CTLA4"] = True
+                self.params["treg_mod_factor"] = 0.5
+                self.params["ctla4_treg_death_bonus"] = 0.03
 
     def remove_interventions(self, interventions: Sequence[str]) -> None:
         for name in interventions:
@@ -331,9 +336,10 @@ class LUADModel(mesa.Model):
                 self.active_interventions.pop("PD1", None)
                 self.params["pd1_blockade"] = False
                 self.params["pd1_kill_bonus"] = 0.0
-            elif upper in {"CTLA4", "TREG", "TREG_MOD"}:
+            elif upper in {"CTLA4", "TREG", "TREG_MOD", "CTLA4_ADCC"}:
                 self.active_interventions.pop("CTLA4", None)
                 self.params["treg_mod_factor"] = 1.0
+                self.params["ctla4_treg_death_bonus"] = 0.0
 
     def step(self) -> None:
         self.field_engine.begin_step()
