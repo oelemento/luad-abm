@@ -123,11 +123,32 @@ class CD8TCell(LUADBaseAgent):
     def state_updates_step(self) -> None:
         self.activation = float(max(0.0, min(1.0, self.activation * 0.99)))
         self.recent_kills = max(0, self.recent_kills - 1)
+        # IL-15-driven proliferation: activated CD8s divide
+        il15_prolif = self.model.params.get("il15_cd8_prolif_rate", 0.0)
+        if il15_prolif > 0 and self.activation > 0.3:
+            prolif_rate = il15_prolif * self.activation
+            if self.model.random.random() < prolif_rate:
+                self._attempt_division()
         # Death: base rate + scaled by exhaustion level (continuous, not threshold)
         death_rate = self.model.params["immune_base_death_rate"]
         death_rate += self.model.params["cd8_exhaustion_death_bonus"] * self.exhaustion
+        # IL-15 survival boost
+        death_rate *= self.model.params.get("il15_cd8_survival_factor", 1.0)
         if self.model.random.random() < death_rate:
             rules.remove_immune_agent(self.model, self)
+
+    def _attempt_division(self) -> None:
+        empty = [
+            pos for pos in self.model.grid.get_neighborhood(self.pos, moore=True, include_center=False)
+            if self.model.grid.is_cell_empty(pos)
+        ]
+        if not empty:
+            return
+        new_pos = self.model.random.choice(empty)
+        daughter = CD8TCell(self.model, activation=self.activation * 0.5,
+                            exhaustion=self.exhaustion * 0.3)
+        self.model.grid.place_agent(daughter, new_pos)
+        self.model.scheduler.add(daughter)
 
 
 class CD4TCell(LUADBaseAgent):

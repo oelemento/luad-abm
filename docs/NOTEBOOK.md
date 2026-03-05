@@ -1,5 +1,76 @@
 # Lab Notebook — LungCancerSim2
 
+## Hypotheses
+
+| ID | Hypothesis | Status | Figure | Script |
+|----|-----------|--------|--------|--------|
+| H1 | Earlier treatment timing improves tumor control in KP mice | Supported (marginal) | `outputs/treatment_timing_sweep/treatment_timing_sweep.png` | `scripts/treatment_timing_sweep.py` |
+| H2 | CTLA4→PD1 sequential dosing outperforms PD1→CTLA4 (reducing suppression before boosting killing is more effective) | **Testing** | `outputs/sequential_dosing/sequential_dosing.png` | `scripts/sequential_dosing_sweep.py` |
+| H3 | CTLA4 with ADCC-mediated Treg depletion outperforms suppression-only CTLA4 | **Testing** | same as H2 | same as H2 |
+| H4 | Anti-PD1/IL-15 fusion (SAR445877) outperforms PD1+CTLA4 combo by expanding CD8 pool in situ | **Testing** | same as H2 | same as H2 |
+| H5 | Triple combination (PD1/IL-15 + CTLA4-ADCC) produces synergistic tumor control | **Testing** | same as H2 | same as H2 |
+
+---
+
+## 2026-03-05: Sequential dosing + PD1/IL-15 fusion experiment
+
+### Motivation
+
+The timing sweep showed ICB modifies killing efficiency but not immune cell numbers. An anti-PD1/IL-15 fusion protein (SAR445877) could break this pattern by expanding CD8s in situ via IL-15-driven proliferation. We compare monotherapy, combo, sequential dosing, and the fusion protein.
+
+### Model additions
+
+- **CTLA4 ADCC mode**: `CTLA4_ADCC` intervention adds `ctla4_treg_death_bonus = 0.03/tick` (~3x baseline Treg death rate), modeling Fc-mediated Treg depletion (Arce Vargas et al. 2018)
+- **PD1/IL-15 fusion**: `PD1_IL15` intervention combines PD1 blockade with IL-15 effects:
+  - `il15_cd8_prolif_rate = 0.04` — activated CD8s (activation > 0.3) divide proportional to activation level
+  - `il15_cd8_survival_factor = 0.5` — halved CD8 death rate during treatment
+  - CD8 daughters inherit 50% parent activation, 30% parent exhaustion
+- **CD8 division**: New `_attempt_division()` on CD8TCell class (Tregs already had this)
+
+### Experimental design
+
+8 arms × 2 CTLA4 modes (13 unique conditions), 20 seeds each, all starting week 7, measured week 9:
+
+| Arm | Week 7 | Week 8 |
+|-----|--------|--------|
+| Untreated | — | — |
+| PD1 only | PD1 | — |
+| CTLA4 only | CTLA4 | — |
+| PD1+CTLA4 combo | PD1+CTLA4 | — |
+| PD1→CTLA4 | PD1 | CTLA4 |
+| CTLA4→PD1 | CTLA4 | PD1 |
+| PD1/IL-15 | PD1_IL15 | — |
+| PD1/IL-15 + CTLA4 | PD1_IL15+CTLA4 | — |
+
+### Local test (1 seed)
+
+| Condition | Tumor | CD8 | Treg | CD8:Treg | ΔTumor% |
+|-----------|-------|-----|------|----------|---------|
+| Untreated | 2937 | 1084 | 442 | 2.45 | — |
+| PD1 only | 2896 | 1133 | 396 | 2.86 | -1.4% |
+| CTLA4 only | 2780 | 1126 | 461 | 2.44 | -5.3% |
+| PD1+CTLA4 combo | 2713 | 1079 | 440 | 2.45 | -7.6% |
+| PD1→CTLA4 | 2856 | 1097 | 413 | 2.66 | -2.8% |
+| CTLA4→PD1 | 2735 | 1121 | 451 | 2.49 | -6.9% |
+| **PD1/IL-15** | **2532** | **1290** | 438 | 2.95 | **-13.8%** |
+| **PD1/IL-15 + CTLA4** | **2435** | **1296** | 415 | 3.12 | **-17.1%** |
+| **PD1/IL-15 + CTLA4-ADCC** | **2292** | **1310** | 246 | 5.33 | **-22.0%** |
+
+### Key observations (preliminary, 1 seed)
+
+1. **PD1/IL-15 is the best monotherapy** — doubles the effect of PD1+CTLA4 combo (-13.8% vs -7.6%), and it's the first intervention that actually increases CD8 counts (1290 vs 1084 untreated)
+2. **CTLA4→PD1 > PD1→CTLA4** in suppression mode (-6.9% vs -2.8%) — clearing suppression first helps
+3. **Triple combo (PD1/IL-15 + CTLA4-ADCC) is best overall** at -22.0%, with CD8:Treg ratio of 5.33 (vs 2.45 untreated)
+4. **ADCC alone disappoints** — CTLA4-ADCC without IL-15 gives only -1.1% to -4.0% despite depleting Tregs to ~250
+
+### Status
+
+- Cluster job 2699797 submitted (sequential dosing, 6 original arms × 2 modes)
+- Need to resubmit with PD1/IL-15 arms added
+- Full results with 20 seeds pending
+
+---
+
 ## 2026-03-04: Treatment timing sweep — two protocols compared
 
 ### Motivation

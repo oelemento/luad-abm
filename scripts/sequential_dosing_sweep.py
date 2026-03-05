@@ -41,7 +41,7 @@ WK9_END = 9 * TICKS_PER_WEEK
 
 
 def make_arms(ctla4_key: str) -> dict[str, Schedule]:
-    """Build treatment schedules for all 6 arms.
+    """Build treatment schedules for all arms.
 
     ctla4_key: "CTLA4" for suppression-only, "CTLA4_ADCC" for suppression + depletion.
     """
@@ -63,6 +63,14 @@ def make_arms(ctla4_key: str) -> dict[str, Schedule]:
         f"{ctla4_key}_then_PD1": [
             (WK7_START, WK8_START, [ctla4_key]),
             (WK8_START, WK9_END, ["PD1"]),
+        ],
+        # SAR445877: anti-PD1/IL-15 fusion protein
+        "PD1_IL15": [
+            (WK7_START, WK8_START, ["PD1_IL15"]),
+        ],
+        # PD1/IL-15 + CTLA4 combo
+        f"PD1_IL15_plus_{ctla4_key}": [
+            (WK7_START, WK8_START, ["PD1_IL15", ctla4_key]),
         ],
     }
 
@@ -119,8 +127,8 @@ def run_all(params_vec: np.ndarray, n_seeds: int) -> dict:
         arms = make_arms(ctla4_key)
 
         for arm_name, schedule in arms.items():
-            # Skip untreated/PD1-only for ADCC mode (shared with suppression)
-            if ctla4_key == "CTLA4_ADCC" and arm_name in ("untreated", "PD1_only"):
+            # Skip shared arms for ADCC mode (identical to suppression mode)
+            if ctla4_key == "CTLA4_ADCC" and arm_name in ("untreated", "PD1_only", "PD1_IL15"):
                 continue
 
             label = f"{arm_name}" if ctla4_key == "CTLA4" else f"{arm_name}"
@@ -148,18 +156,21 @@ def make_figure(results: dict, n_seeds: int, out_dir: Path):
     import matplotlib.pyplot as plt
 
     # Define display order and labels
+    # (suppression_key, adcc_key, display_label)
     arm_pairs = [
-        ("untreated",           "untreated",            "Untreated"),
-        ("PD1_only",            "PD1_only",             "PD1 only"),
-        ("CTLA4_only",          "CTLA4_ADCC_only",      "CTLA4 only"),
-        ("combo_CTLA4",         "combo_CTLA4_ADCC",     "Combo"),
-        ("PD1_then_CTLA4",      "PD1_then_CTLA4_ADCC",  "PD1 → CTLA4"),
-        ("CTLA4_then_PD1",      "CTLA4_ADCC_then_PD1",  "CTLA4 → PD1"),
+        ("untreated",           "untreated",                    "Untreated"),
+        ("PD1_only",            "PD1_only",                     "PD1 only"),
+        ("CTLA4_only",          "CTLA4_ADCC_only",              "CTLA4 only"),
+        ("combo_CTLA4",         "combo_CTLA4_ADCC",             "PD1+CTLA4"),
+        ("PD1_then_CTLA4",      "PD1_then_CTLA4_ADCC",          "PD1→CTLA4"),
+        ("CTLA4_then_PD1",      "CTLA4_ADCC_then_PD1",          "CTLA4→PD1"),
+        ("PD1_IL15",            "PD1_IL15",                     "PD1/IL-15"),
+        ("PD1_IL15_plus_CTLA4", "PD1_IL15_plus_CTLA4_ADCC",     "PD1/IL-15\n+CTLA4"),
     ]
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
     fig.suptitle(
-        "Sequential Dosing: PD1 vs CTLA4 ordering\n"
+        "Sequential & Combination Dosing: ICB ± IL-15\n"
         f"1-week pulses starting at week 7, measured at week 9 "
         f"(v6 posterior mean, {n_seeds} seeds/condition)",
         fontsize=12, fontweight="bold",
