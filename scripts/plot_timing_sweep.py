@@ -5,7 +5,6 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.patches import Patch
 
 out_dir = Path("outputs/treatment_timing_sweep")
 data = np.load(out_dir / "sweep_results.npz", allow_pickle=True)
@@ -19,7 +18,7 @@ labels_display = [
     "Treated\nat wk 7",
 ]
 
-GAGLIA_WEEK = "week_7"  # Gaglia 8wk experiment: 1-week pulse at week 7
+GAGLIA_WEEK = None  # no special highlighting
 
 tumor_means, tumor_stds = [], []
 cd8_means, treg_means = [], []
@@ -41,13 +40,11 @@ for label in labels_raw:
 baseline_tumor = tumor_means[0]
 x = np.arange(len(labels_raw))
 
-# Colors: gray=untreated, green=Gaglia-validated (wk 7), blue=counterfactual
+# Colors: gray=untreated, blue=treated
 colors, edge_colors, edge_widths = [], [], []
 for label in labels_raw:
     if label == "no_treatment":
         colors.append("#888888"); edge_colors.append("black"); edge_widths.append(0.5)
-    elif label == GAGLIA_WEEK:
-        colors.append("#2ca02c"); edge_colors.append("#1a6b1a"); edge_widths.append(2.0)
     else:
         colors.append("#6baed6"); edge_colors.append("black"); edge_widths.append(0.5)
 
@@ -70,9 +67,6 @@ ax.set_ylabel("Tumor cell count at week 8")
 ax.set_title("A. Tumor burden at 8-week endpoint")
 ax.axhline(baseline_tumor, color="red", linestyle="--", alpha=0.4, linewidth=0.8,
            label="Untreated baseline")
-ax.annotate("Gaglia\n8wk protocol",
-            xy=(7, tumor_means[7] + tumor_stds[7] + 30),
-            ha="center", fontsize=8, color="#1a6b1a", fontweight="bold")
 # % change labels
 for i, (tm, ts) in enumerate(zip(tumor_means, tumor_stds)):
     if labels_raw[i] != "no_treatment":
@@ -87,7 +81,6 @@ ax.bar(x - w/2, cd8_means, w, label="CD8+ T cells", color="dodgerblue",
        edgecolor="black", linewidth=0.5)
 ax.bar(x + w/2, treg_means, w, label="Tregs", color="salmon",
        edgecolor="black", linewidth=0.5)
-ax.axvspan(6.55, 7.45, alpha=0.12, color="green")  # highlight Gaglia week
 ax.set_xticks(x)
 ax.set_xticklabels(labels_display, fontsize=8)
 ax.set_ylabel("Cell count at week 8")
@@ -110,8 +103,6 @@ delta_colors = []
 for d, label in zip(deltas, labels_raw):
     if label == "no_treatment":
         delta_colors.append("#888888")
-    elif label == GAGLIA_WEEK:
-        delta_colors.append("#2ca02c")
     elif d < 0:
         delta_colors.append("#6baed6")
     else:
@@ -122,18 +113,6 @@ ax.set_xticklabels(labels_display, fontsize=8)
 ax.set_ylabel("Tumor change vs untreated (%)")
 ax.set_title("D. Treatment efficacy by timing")
 ax.axhline(0, color="black", linewidth=0.5)
-ax.annotate("Gaglia 8wk protocol",
-            xy=(7, deltas[7] - 3 if deltas[7] < 0 else deltas[7] + 1),
-            ha="center", fontsize=8, color="#1a6b1a", fontweight="bold")
-
-# Legend
-legend_elements = [
-    Patch(facecolor="#888888", edgecolor="black", label="Untreated"),
-    Patch(facecolor="#2ca02c", edgecolor="#1a6b1a", linewidth=2, label="Gaglia-validated (wk 7)"),
-    Patch(facecolor="#6baed6", edgecolor="black", label="Counterfactual (model prediction)"),
-]
-fig.legend(handles=legend_elements, loc="lower center", ncol=3,
-           fontsize=10, frameon=True, bbox_to_anchor=(0.5, -0.02))
 
 plt.tight_layout(rect=[0, 0.03, 1, 0.92])
 fig_path = out_dir / "treatment_timing_sweep.png"
