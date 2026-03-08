@@ -5,10 +5,228 @@
 | ID | Hypothesis | Status | Figure | Script |
 |----|-----------|--------|--------|--------|
 | H1 | Earlier treatment timing improves tumor control in KP mice | Supported (marginal) | `outputs/treatment_timing_sweep/treatment_timing_sweep.png` | `scripts/treatment_timing_sweep.py` |
-| H2 | CTLA4→PD1 sequential dosing outperforms PD1→CTLA4 (reducing suppression before boosting killing is more effective) | **Testing** | `outputs/sequential_dosing/sequential_dosing.png` | `scripts/sequential_dosing_sweep.py` |
-| H3 | CTLA4 with ADCC-mediated Treg depletion outperforms suppression-only CTLA4 | **Testing** | same as H2 | same as H2 |
-| H4 | Anti-PD1/IL-15 fusion (SAR445877) outperforms PD1+CTLA4 combo by expanding CD8 pool in situ | **Testing** | same as H2 | same as H2 |
-| H5 | Triple combination (PD1/IL-15 + CTLA4-ADCC) produces synergistic tumor control | **Testing** | same as H2 | same as H2 |
+| H2 | CTLA4→PD1 sequential dosing outperforms PD1→CTLA4 (reducing suppression before boosting killing is more effective) | **Not supported** — CTLA4→PD1 (−1.6%) worse than PD1→CTLA4 (−4.0%) | `outputs/sequential_dosing/sequential_dosing.png` | `scripts/sequential_dosing_sweep.py` |
+| H3 | CTLA4 with ADCC-mediated Treg depletion outperforms suppression-only CTLA4 | **Not supported** — ADCC depletes Tregs (255 vs 428) but tumor kill negligible (+0.3% vs −0.5%) | same as H2 | same as H2 |
+| H4 | Anti-PD1/IL-15 fusion (SAR445877) outperforms PD1+CTLA4 combo by expanding CD8 pool in situ | **Supported** — PD1/IL-15 (−13.6%) >> PD1+CTLA4 combo (−4.1%), CD8 count 1248 vs 1133 | same as H2 | same as H2 |
+| H5 | Triple combination (PD1/IL-15 + CTLA4-ADCC) produces synergistic tumor control | **Not supported** (additive, not synergistic) — −14.6% vs −13.6% for PD1/IL-15 alone | same as H2 | same as H2 |
+| H6 | Human LUAD tumors initialized from patient CyCIF data respond better to ICB than KP mice, due to more favorable CD8:Treg ratio (4.49 vs 2.65) and higher immune activation potential | **Partially supported** — immune-hot patients (CD8:Treg > 5) respond dramatically better; immune-cold patients (CD8:Treg < 2) respond worse. CD8:Treg ratio predicts response. | `outputs/human_luad_sweep_v2/human_luad_sweep.png` | `scripts/human_luad_sweep.py` |
+| H7 | Antigen-driven CD8 clonal expansion (kill-triggered proliferation) fixes the ABM's underestimation of response in high-ratio/low-CD8 patients | Pending — running on Cayuga | `outputs/human_luad_killprolif/` | `scripts/human_luad_sweep.py --kill-prolif 0.5` |
+
+---
+
+## 2026-03-07: H7 — Antigen-driven CD8 clonal expansion (kill-triggered proliferation)
+
+### Motivation
+
+2D biomarker analysis revealed a key discrepancy between ABM predictions and clinical data (Sorin et al. 2025): the ABM predicts that high-ratio/low-CD8 patients don't respond (0/1), but clinical data shows they respond best (88%, 7/8). The ABM overweights CD8 quantity because proliferation is density-dependent (requires empty neighbor), not antigen-driven. In reality, even a few unsuppressed CD8s can expand rapidly upon TCR engagement after PD1 blockade.
+
+### Model change
+
+Added `cd8_kill_prolif_prob` parameter to `rules.kill_target()`: when a CD8 successfully kills a tumor cell, it has probability `cd8_kill_prolif_prob` of dividing into the cleared grid square. The daughter inherits the parent's activation level and 50% of its exhaustion (asymmetric division favoring effector phenotype).
+
+### Literature basis for p=0.5
+
+Upon TCR engagement, a single naive CD8 T cell produces ~10,000-100,000 effector cells over 7-10 days (Blattman et al., J Exp Med 2002; Badovinac et al., Nat Immunol 2002), corresponding to ~13-17 doublings in ~170-240h, or one division per ~12-18h. At 24 ticks/week (~7h/tick), this gives p≈0.3-0.5 per tick. We use p=0.5 as a literature-informed upper estimate for effector CD8s in an active anti-tumor response. This is NOT SBI-fitted — it is a fixed parameter based on published clonal expansion kinetics.
+
+### Experiment
+
+Same design as H6 sweep: 14 human LUAD patients + KP baseline × 3 arms (untreated, PD1+CTLA4, PD1/IL-15) × 20 seeds = 900 sims. Only difference: `--kill-prolif 0.5`. Running on Cayuga (16 CPUs, 15 workers).
+
+Files modified: `luad_abm/luad/rules.py` (kill_target), `luad_abm/luad/model.py` (default_params), `scripts/human_luad_sweep.py` (--kill-prolif arg), `scripts/slurm_human_luad_killprolif.sh` (new SLURM script)
+
+---
+
+## 2026-03-07: Validation of CD8:Treg ratio as ICB biomarker (Carvajal-Hausdorf et al. 2025)
+
+### Data source
+
+Carvajal-Hausdorf et al., Science Advances 2025 — mIF data from Dryad (doi:10.5061/dryad.b8gtht7p4). 1.45M cells, 33 biomarkers, 132 patients (22 with IO + mIF data: 7 responders, 15 non-responders). Cell phenotypes pre-classified: Tc (CD8), Treg, Th, Monocyte, Macrophage, Tumor, etc.
+
+### Results
+
+| Metric | Responders (median) | Non-responders (median) | p-value (Mann-Whitney) |
+|--------|-------------------|------------------------|----------------------|
+| CD8:Treg ratio | 3.59 | 2.06 | 0.490 |
+| CD8 count | 1453 | 799 | 0.448 |
+| Treg count | 649 | 489 | 0.680 |
+| **CD8 fraction** | **0.06** | **0.03** | **0.004** |
+| Treg fraction | 0.03 | 0.01 | 0.142 |
+
+### Key finding
+
+**CD8:Treg ratio is NOT significantly associated with IO response** (p=0.49) in this cohort, but **CD8 fraction is** (p=0.004). This supports our ABM observation that it's a 2D problem — both absolute CD8 density and ratio matter, with density being the stronger predictor. High-ratio patients with low CD8 fraction don't respond (e.g., P_51: ratio 7.88, CD8 frac 2%, NR). Low-ratio patients with high CD8 fraction can respond (e.g., P_45: ratio 0.78, CD8 frac 6.3%, R).
+
+### Caveats
+
+- Small sample (n=22 with IO + mIF data, only 7 responders) — very low statistical power for ratio
+- mIF from TMA cores (small tissue area) may not represent full tumor composition
+- CD8 fraction significance (p=0.004) should be validated in larger cohort
+
+---
+
+## 2026-03-07: Validation with Sorin et al. 2025 DSP-GeoMx data
+
+### Data source
+
+Sorin et al. 2025 — DSP-GeoMx spatial transcriptomics of NSCLC tumors treated with checkpoint inhibitors. Data from authors' GitHub repo (tznaung/NSCLC_SpatialOmics). Cell type proportions pre-computed via deconvolution in two compartments: Stroma (CD45+) and Tumor (CK+). 58 unique patients in stroma (36 R, 22 NR), 56 in tumor (34 R, 22 NR). Cell types include CD8_cells, Treg, Exhausted CD8, Cytotoxic CD8, CD4, M1/M2 macrophages, B cells, DCs.
+
+### Results
+
+**Stroma compartment (n=58):**
+
+| Metric | Responders (median) | Non-responders (median) | p-value (Mann-Whitney) |
+|--------|-------------------|------------------------|----------------------|
+| **CD8:Treg ratio** | **3.29** | **1.89** | **0.012** |
+| CD8 fraction | 0.040 | 0.043 | 0.659 |
+| **Treg fraction** | **0.011** | **0.025** | **0.001** |
+
+**Tumor (CK) compartment (n=56):**
+
+| Metric | Responders (median) | Non-responders (median) | p-value (Mann-Whitney) |
+|--------|-------------------|------------------------|----------------------|
+| CD8:Treg ratio | 3.12 | 1.89 | 0.596 |
+| CD8 fraction | 0.006 | 0.006 | 0.620 |
+| **Treg fraction** | **0.001** | **0.005** | **0.012** |
+
+### Key finding
+
+**Stromal CD8:Treg ratio IS significantly associated with IO response** (p=0.012), validating the ABM prediction. However, the effect is driven primarily by **Treg depletion** (p=0.001), not CD8 enrichment (p=0.66). In the tumor compartment, only Treg fraction is significant — consistent with the stroma result but weaker signal due to sparse immune infiltration in tumor nests.
+
+### Synthesis across validation cohorts
+
+| Cohort | N (IO+data) | CD8:Treg ratio | CD8 fraction | Treg fraction |
+|--------|------------|---------------|-------------|--------------|
+| Carvajal-Hausdorf 2025 (mIF) | 22 | p=0.49 (NS) | **p=0.004** | p=0.14 (NS) |
+| Sorin 2025 (DSP stroma) | 58 | **p=0.012** | p=0.66 (NS) | **p=0.001** |
+| Sorin 2025 (DSP tumor) | 56 | p=0.60 (NS) | p=0.62 (NS) | **p=0.012** |
+
+Different cohorts highlight different aspects of the same underlying biology: the CD8-Treg immunosuppressive balance determines ICB response, but the dominant signal depends on the measurement platform (mIF whole-cell vs DSP compartment-level) and tumor architecture. Treg fraction is the most consistently significant marker across datasets.
+
+Figure: `outputs/human_luad_sweep_v2/sorin_validation.png`
+
+### 2D biomarker analysis: ABM vs Sorin clinical data
+
+The ABM predicts response is a 2D function of CD8:Treg ratio AND absolute CD8 fraction. We tested this by splitting patients into quadrants (above/below median for each axis):
+
+| Quadrant | ABM (PD1+CTLA4) | Sorin (stroma) |
+|----------|-----------------|----------------|
+| High ratio + High CD8 | 5/5 respond (100%) | 15/21 (71%) |
+| **High ratio + Low CD8** | **0/1 (0%)** | **7/8 (88%)** |
+| Low ratio + High CD8 | 0/1 (0%) | 2/8 (25%) |
+| Low ratio + Low CD8 | 0/5 (0%) | 12/21 (57%) |
+
+**Key discrepancy**: The ABM predicts that high ratio + low CD8 = non-responder (you need enough CD8 killers), but clinical data shows this is the **best** quadrant (88%). Clinically, even a small number of unsuppressed CD8s can mount effective anti-tumor responses through antigen-driven clonal expansion — a mechanism the ABM underrepresents.
+
+**What the ABM gets right**: Low ratio + high CD8 = worst outcome (25% in Sorin, 0% in ABM). Lots of CD8 cells that are heavily suppressed by Tregs cannot respond to ICB.
+
+**What the ABM gets wrong**: It overweights CD8 quantity vs CD8 functionality. In the current model, CD8 proliferation is density-dependent (requires empty neighbor), not antigen-driven. A few functional CD8s in low-Treg environments can expand rapidly in vivo upon PD1 blockade, but the ABM doesn't capture this positive feedback.
+
+**Potential model fix**: Add antigen-driven CD8 proliferation — CD8s that successfully kill a tumor cell get a proliferation bonus (binary fission into the cleared grid square). This would make small numbers of unsuppressed CD8s more effective, consistent with the clinical observation. The current model has CD8 proliferation controlled by `cd8_prolif_rate` (SBI-fitted ~0.04/tick) gated on empty neighbors. An antigen-driven term could add a second proliferation pathway: `if killed_tumor: spawn_daughter_in_cleared_spot()`. This is biologically motivated by clonal expansion upon TCR engagement.
+
+Figure: `outputs/human_luad_sweep_v2/sorin_2d_biomarker.png`
+
+---
+
+## 2026-03-07: Applied for SU2C-MARK NSCLC data (dbGaP phs002822)
+
+Applied for controlled access to the SU2C-MARK NSCLC cohort (Jung et al., Nature Genetics 2023) via dbGaP (project #43102). This dataset contains 393 advanced NSCLC patients treated with checkpoint inhibitors, with 152 having RNA-seq + RECIST response data. Plan: run CIBERSORTx immune deconvolution to estimate CD8 and Treg fractions, then validate the CD8:Treg ratio as a predictor of ICB response — testing the quantitative thresholds predicted by our ABM (H6 results).
+
+---
+
+## 2026-03-06: Human LUAD immunotherapy sweep (H6)
+
+### Motivation
+
+KP mouse tumors show modest ICB response (−4% PD1+CTLA4, −14% PD1/IL-15). Human LUAD tumors have different immune compositions — potentially more favorable CD8:Treg ratios due to higher neoantigen burden. Using CyCIF spatial phenotyping data from Gaglia 2023 Dataset05 (14 human LUAD patients, 7.8M cells), we initialized the ABM with real patient cell compositions while keeping KP-calibrated kinetic parameters (v6 posterior mean). This tests whether tumor microenvironment composition alone predicts ICB response.
+
+### Method
+
+- **Data source**: Gaglia 2023 Dataset05, CyCIF quantification (Results_Aggr_20210619.mat)
+- **Cell phenotyping**: Tumor (Keratin+/TTF1+), CD8 (CD3D+CD8a+), Treg (CD3D+CD4+FOXP3+), Macrophage (CD68+/CD163+), using 75th percentile intensity threshold
+- **Grid mapping**: Patient fractions scaled to fill ~80% of 100×100 grid, preserving relative composition
+- **Arms**: Untreated, PD1+CTLA4, PD1/IL-15 (1-week pulse at week 7, measured week 9)
+- **Configs**: KP_mouse baseline + 14 human patients × 3 arms × 20 seeds = 900 sims
+- **Compute**: Cayuga HPC, 16 CPUs (15 parallel workers), 11h 21m runtime (job 2700333)
+
+### Results (20 seeds per condition)
+
+| Config | Arm | Tumor (mean±sd) | CD8 | Treg | CD8:Treg | ΔTumor% |
+|--------|-----|-----------------|-----|------|----------|---------|
+| KP_mouse | untreated | 1516 ± 675 | 1135 | 428 | 2.66 | +0.0% |
+| KP_mouse | PD1_CTLA4 | 1453 ± 665 | 1133 | 441 | 2.58 | −4.1% |
+| KP_mouse | PD1_IL15 | 1309 ± 606 | 1248 | 427 | 2.93 | −13.6% |
+| CASE1 | untreated | 4408 ± 80 | 1387 | 787 | 1.77 | +0.0% |
+| CASE1 | PD1_CTLA4 | 4321 ± 78 | 1392 | 801 | 1.74 | −2.0% |
+| CASE1 | PD1_IL15 | 4254 ± 84 | 1494 | 783 | 1.91 | −3.5% |
+| CASE7 | untreated | 41 ± 56 | 3486 | 506 | 6.91 | +0.0% |
+| CASE7 | PD1_CTLA4 | 22 ± 37 | 3477 | 502 | 6.94 | −45.0% |
+| CASE7 | PD1_IL15 | 13 ± 24 | 3648 | 497 | 7.35 | −68.6% |
+| CASE8 | untreated | 4440 ± 85 | 1504 | 1233 | 1.22 | +0.0% |
+| CASE8 | PD1_CTLA4 | 4343 ± 89 | 1533 | 1252 | 1.23 | −2.2% |
+| CASE8 | PD1_IL15 | 4316 ± 96 | 1628 | 1224 | 1.33 | −2.8% |
+| CASE9 | untreated | 212 ± 132 | 3711 | 706 | 5.26 | +0.0% |
+| CASE9 | PD1_CTLA4 | 165 ± 112 | 3734 | 700 | 5.34 | −22.2% |
+| CASE9 | PD1_IL15 | 126 ± 90 | 3906 | 683 | 5.72 | −40.5% |
+| CASE10 | untreated | 3466 ± 211 | 1742 | 986 | 1.77 | +0.0% |
+| CASE10 | PD1_CTLA4 | 3381 ± 226 | 1757 | 998 | 1.76 | −2.5% |
+| CASE10 | PD1_IL15 | 3325 ± 227 | 1864 | 985 | 1.89 | −4.1% |
+| CASE11 | untreated | 5590 ± 85 | 966 | 448 | 2.16 | +0.0% |
+| CASE11 | PD1_CTLA4 | 5509 ± 92 | 970 | 466 | 2.09 | −1.5% |
+| CASE11 | PD1_IL15 | 5441 ± 92 | 1071 | 450 | 2.39 | −2.7% |
+| CASE12 | untreated | 4390 ± 173 | 1458 | 462 | 3.17 | +0.0% |
+| CASE12 | PD1_CTLA4 | 4289 ± 172 | 1469 | 473 | 3.12 | −2.3% |
+| CASE12 | PD1_IL15 | 4127 ± 153 | 1602 | 462 | 3.48 | −6.0% |
+| CASE13 | untreated | 2246 ± 230 | 2054 | 531 | 3.88 | +0.0% |
+| CASE13 | PD1_CTLA4 | 2144 ± 240 | 2080 | 536 | 3.89 | −4.6% |
+| CASE13 | PD1_IL15 | 2007 ± 228 | 2227 | 529 | 4.22 | −10.7% |
+| CASE14 | untreated | 0 ± 0 | 2985 | 1280 | 2.33 | +0.0% |
+| CASE14 | PD1_CTLA4 | 0 ± 0 | 2985 | 1280 | 2.33 | — |
+| CASE14 | PD1_IL15 | 0 ± 0 | 3124 | 1251 | 2.50 | — |
+| CASE15 | untreated | 1071 ± 192 | 3036 | 871 | 3.49 | +0.0% |
+| CASE15 | PD1_CTLA4 | 972 ± 184 | 3065 | 884 | 3.47 | −9.3% |
+| CASE15 | PD1_IL15 | 893 ± 195 | 3238 | 859 | 3.77 | −16.6% |
+| CASE16 | untreated | 3009 ± 147 | 1575 | 1068 | 1.48 | +0.0% |
+| CASE16 | PD1_CTLA4 | 2946 ± 151 | 1571 | 1075 | 1.46 | −2.1% |
+| CASE16 | PD1_IL15 | 2898 ± 154 | 1673 | 1055 | 1.59 | −3.7% |
+| CASE18 | untreated | 6660 ± 190 | 1087 | 479 | 2.27 | +0.0% |
+| CASE18 | PD1_CTLA4 | 6539 ± 188 | 1125 | 491 | 2.29 | −1.8% |
+| CASE18 | PD1_IL15 | 6376 ± 200 | 1254 | 480 | 2.62 | −4.3% |
+| CASE19 | untreated | 0 ± 0 | 3531 | 672 | 5.26 | +0.0% |
+| CASE19 | PD1_CTLA4 | 0 ± 0 | 3531 | 672 | 5.26 | — |
+| CASE19 | PD1_IL15 | 0 ± 0 | 3670 | 662 | 5.56 | — |
+| CASE21 | untreated | 0 ± 0 | 3449 | 859 | 4.03 | +0.0% |
+| CASE21 | PD1_CTLA4 | 0 ± 0 | 3449 | 859 | 4.03 | — |
+| CASE21 | PD1_IL15 | 0 ± 0 | 3570 | 847 | 4.22 | — |
+
+### Key findings
+
+1. **CD8:Treg ratio is the dominant predictor of ICB response** (panels C, D). Patients with ratio > 5 (CASE7, CASE9) show dramatic treatment effects (−22% to −69%). Patients with ratio < 2 (CASE1, CASE8, CASE10, CASE16) show minimal response (−2% to −4%).
+
+2. **Three patients show spontaneous tumor clearance** (CASE14, CASE19, CASE21) — tumor=0 across all 20 seeds even without treatment. These patients have compositions where KP-calibrated immune dynamics are sufficient to overwhelm tumor growth.
+
+3. **PD1/IL-15 consistently outperforms PD1+CTLA4** across all patients, confirming H4 generalizes beyond KP mice. The advantage is largest in immune-hot tumors (CASE7: −69% vs −45%; CASE9: −41% vs −22%).
+
+4. **Human tumor heterogeneity spans a wide response spectrum**: from near-zero response (CASE8: −2.2% PD1+CTLA4) to near-complete elimination (CASE7: −45% PD1+CTLA4). This 20-fold range far exceeds the variation seen in the KP model.
+
+### Interpretation
+
+The hypothesis is **partially supported**. Human tumors don't uniformly respond better than KP — rather, the CD8:Treg composition ratio determines response magnitude. The KP model (CD8:Treg = 2.66) sits in the middle of the human distribution. Key insight: **initial immune composition, not species-specific biology, is the primary driver of ICB efficacy in this model**. This is consistent with clinical observations that CD8 T-cell infiltration and Treg abundance predict immunotherapy outcomes (e.g., Phase II nivolumab trial using PD-1+ CD8/Treg ratio for patient selection; Cancer Cell 2024 showing Treg IL-2 sequestration drives CD8 exhaustion).
+
+### What is learned vs hardcoded
+
+The CD8:Treg ratio predicting ICB response is **largely a consequence of the hardcoded model architecture**, not an emergent discovery:
+
+- **Hardcoded rules** (model architecture): CD8 cells kill tumors; Tregs suppress CD8 killing in Moore neighborhood; PD1 boosts kill rate; CTLA4 reduces suppression. Given these rules, more CD8 + fewer Tregs → better response is a near-tautology.
+- **Learned from data** (SBI v6 posterior, 17 parameters): CD8 kill rate, proliferation/death rates for all cell types, Treg suppression strength, macrophage suppression, suppressive background. These calibrated *rates* determine the quantitative thresholds (e.g., ratio > 5 → near-elimination) and nonlinear dynamics (spontaneous clearance regimes).
+
+The honest framing: the model **recapitulates** the known clinical association between CD8:Treg ratio and ICB response, and provides **quantitative predictions about response thresholds** using parameters calibrated to KP mouse data. It does not independently *discover* CD8:Treg as a biomarker — that is baked into the mechanistic assumptions. What is genuinely predictive is *where the tipping points are* given KP-fitted kinetics.
+
+### Caveats
+
+- KP kinetic parameters (proliferation, death, kill rates) may not accurately represent human biology — only the initial composition is patient-specific
+- CyCIF phenotyping uses intensity thresholds (75th percentile) which may misclassify cell types
+- The ABM lacks human-specific features (MHC-I diversity, neoantigen load, spatial organization from CyCIF data is not used)
+- Spontaneous clearance cases (CASE14, CASE19, CASE21) likely reflect model overshoot — real tumors at these compositions persist, suggesting missing biology (e.g., tumor immune evasion mechanisms, immune exhaustion not fully captured)
 
 ---
 
@@ -63,11 +281,53 @@ The timing sweep showed ICB modifies killing efficiency but not immune cell numb
 3. **Triple combo (PD1/IL-15 + CTLA4-ADCC) is best overall** at -22.0%, with CD8:Treg ratio of 5.33 (vs 2.45 untreated)
 4. **ADCC alone disappoints** — CTLA4-ADCC without IL-15 gives only -1.1% to -4.0% despite depleting Tregs to ~250
 
-### Status
+### Full results (20 seeds, Cayuga job 2699807, 5h46m)
 
-- Cluster job 2699797 submitted (sequential dosing, 6 original arms × 2 modes)
-- Need to resubmit with PD1/IL-15 arms added
-- Full results with 20 seeds pending
+#### Suppression-only CTLA4 mode
+
+| Condition | Tumor (mean±sd) | CD8 | Treg | CD8:Treg | ΔTumor% |
+|-----------|----------------|-----|------|----------|---------|
+| Untreated | 1516 ± 675 | 1135 | 428 | 2.66 | — |
+| PD1 only | 1470 ± 679 | 1136 | 425 | 2.68 | −3.0% |
+| CTLA4 only | 1508 ± 663 | 1133 | 437 | 2.60 | −0.5% |
+| PD1+CTLA4 combo | 1453 ± 665 | 1133 | 441 | 2.58 | −4.1% |
+| PD1→CTLA4 | 1456 ± 664 | 1137 | 427 | 2.67 | −4.0% |
+| CTLA4→PD1 | 1492 ± 655 | 1138 | 439 | 2.60 | −1.6% |
+| PD1/IL-15 | 1309 ± 606 | 1248 | 427 | 2.93 | −13.6% |
+| PD1/IL-15 + CTLA4 | 1318 ± 593 | 1258 | 432 | 2.92 | −13.1% |
+
+#### ADCC CTLA4 mode (suppression + Treg depletion)
+
+| Condition | Tumor (mean±sd) | CD8 | Treg | CD8:Treg | ΔTumor% |
+|-----------|----------------|-----|------|----------|---------|
+| CTLA4-ADCC only | 1520 ± 692 | 1134 | 255 | 4.46 | +0.3% |
+| PD1+CTLA4-ADCC combo | 1502 ± 708 | 1144 | 250 | 4.59 | −0.9% |
+| PD1→CTLA4-ADCC | 1470 ± 683 | 1146 | 224 | 5.14 | −3.0% |
+| CTLA4-ADCC→PD1 | 1497 ± 681 | 1139 | 257 | 4.45 | −1.3% |
+| PD1/IL-15 + CTLA4-ADCC | 1294 ± 596 | 1262 | 247 | 5.14 | −14.6% |
+
+### Key findings (20 seeds)
+
+1. **PD1/IL-15 is the dominant intervention** — −13.6% as monotherapy, 3× better than PD1+CTLA4 combo (−4.1%). It is the only intervention that meaningfully increases CD8 count (1248 vs 1135 untreated), confirming that expanding the effector pool matters more than modulating existing immune cells.
+
+2. **H2 rejected: PD1→CTLA4 ≈ combo > CTLA4→PD1** — Sequential PD1-first (−4.0%) matches simultaneous combo (−4.1%) and beats CTLA4-first (−1.6%). Boosting CD8 killing first, then reducing Treg suppression works as well as combo; clearing suppression first does not help.
+
+3. **H3 rejected: ADCC depletes Tregs but doesn't kill tumors** — CTLA4-ADCC halves Treg count (255 vs 428) and doubles CD8:Treg ratio (4.46 vs 2.66) but produces essentially zero tumor reduction (+0.3%). The model's Treg suppression mechanism acts locally and reducing Treg numbers doesn't proportionally reduce their suppressive effect on nearby CD8s.
+
+4. **H5 not synergistic: PD1/IL-15 + CTLA4-ADCC is additive** — −14.6% vs −13.6% for PD1/IL-15 alone. Adding ADCC-mediated Treg depletion to the fusion protein contributes only ~1% additional tumor reduction despite dramatic Treg depletion (247 vs 427).
+
+5. **CTLA4 monotherapy is nearly inert** — −0.5% (suppression) and +0.3% (ADCC). Reducing Treg suppressive capacity alone has minimal impact on tumor burden.
+
+### Interpretation
+
+The model strongly predicts that **CD8 effector expansion** (via IL-15) is the rate-limiting step for tumor control, not immune checkpoint relief or Treg depletion. This suggests SAR445877-like agents that combine PD1 blockade with CD8-expanding cytokines should outperform conventional ICB combinations. The failure of CTLA4-ADCC to improve outcomes despite halving Treg counts implies that in this tumor microenvironment, Treg-mediated suppression is not the dominant resistance mechanism.
+
+### Caveats
+
+- CTLA4 ADCC death bonus (0.03/tick) is a rough estimate; true depletion kinetics may differ
+- IL-15 proliferation parameters (rate=0.04, survival factor=0.5) are not calibrated to data
+- Model lacks NK cells, which are also IL-15-responsive
+- 9-week endpoint; longer simulations may show different dynamics
 
 ---
 

@@ -95,6 +95,7 @@ def default_params() -> Dict[str, float]:
         "anti_tgfb_caf_penalty": 0.5,
         "treg_mod_factor": 1.0,
         "suppressive_background": 0.05,
+        "cd8_kill_prolif_prob": 0.0,
     }
 
 

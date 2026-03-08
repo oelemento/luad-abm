@@ -72,12 +72,28 @@ def compute_cd8_kill_probability(model, killer, target, local_suppression: float
 
 
 def kill_target(model, killer, target) -> bool:
-    """Remove the target from the grid and scheduler."""
+    """Remove the target from the grid and scheduler.
+
+    If cd8_kill_prolif_prob > 0, the killer may divide into the cleared spot
+    (antigen-driven clonal expansion).
+    """
+    killed_pos = target.pos
     model.grid.remove_agent(target)
     target.remove()
     model.scheduler.remove(target)
     model.removed_agents.append(target)
     killer.recent_kills += 1
+
+    # Antigen-driven CD8 proliferation: divide into the cleared grid square
+    kill_prolif = model.params.get("cd8_kill_prolif_prob", 0.0)
+    if kill_prolif > 0.0 and model.grid.is_cell_empty(killed_pos):
+        if model.random.random() < kill_prolif:
+            from luad_abm.luad.agents import CD8TCell
+            daughter = CD8TCell(model, activation=killer.activation,
+                                exhaustion=killer.exhaustion * 0.5)
+            model.grid.place_agent(daughter, killed_pos)
+            model.scheduler.add(daughter)
+
     return True
 
 
