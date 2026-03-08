@@ -91,7 +91,7 @@ def kill_target(model, killer, target) -> bool:
     kill_prolif = model.params.get("cd8_kill_prolif_prob", 0.0)
     if kill_prolif > 0.0 and model.grid.is_cell_empty(killed_pos):
         if model.random.random() < kill_prolif:
-            from gaglia_abm.luad.agents import CD8TCell
+            from luad.agents import CD8TCell
             daughter = CD8TCell(model, activation=killer.activation,
                                 exhaustion=killer.exhaustion * 0.5)
             model.grid.place_agent(daughter, killed_pos)
