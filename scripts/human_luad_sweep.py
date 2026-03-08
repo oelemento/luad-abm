@@ -181,6 +181,12 @@ def run_single_sim(params_vec: np.ndarray, initial_agents: dict[str, int],
     # Antigen-driven CD8 proliferation (set via extra_params)
     if extra_params:
         for k, v in extra_params.items():
+            if k not in model.params:
+                raise KeyError(
+                    f"extra_params key '{k}' not in model.params — "
+                    f"did you modify the wrong codebase? "
+                    f"Scripts use gaglia_abm/, not luad_abm/"
+                )
             model.params[k] = v
 
     # Pre-compute treatment events
