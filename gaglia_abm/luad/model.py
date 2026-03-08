@@ -61,6 +61,7 @@ def default_params() -> Dict[str, float]:
         "ctla4_treg_death_bonus": 0.0,
         "il15_cd8_prolif_rate": 0.0,
         "il15_cd8_survival_factor": 1.0,
+        "cd8_kill_prolif_prob": 0.0,
     }
 
 
