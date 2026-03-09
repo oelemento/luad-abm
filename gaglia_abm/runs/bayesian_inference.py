@@ -62,6 +62,7 @@ PARAM_DEFS = [
     ("recruit_exhaustion_priming", 0.05, 0.6),    # CD8 recruits arrive pre-exhausted
     ("mhc_i_induction_rate",     0.005, 0.10),    # IFNg → MHC-I upregulation on tumor
     ("mhc_i_decay_rate",         0.0005, 0.01),   # MHC-I decay (immune evasion)
+    ("cd8_kill_prolif_prob",     0.0,   0.15),    # v7: antigen-driven CD8 clonal expansion on kill
 ]
 # Fixed parameters (removed from inference due to non-identifiability)
 FIXED_PARAMS = {
@@ -401,7 +402,7 @@ def main():
     print(f"Observed summary stats (4 conditions): {x_observed.shape[0]} dimensions")
     print(f"Parameters to infer: {len(PARAM_NAMES)}")
 
-    checkpoint_path = out_dir / "training_data_v6.npz"
+    checkpoint_path = out_dir / "training_data_v7.npz"
 
     if not args.infer_only:
         print(f"\n=== Phase 1: Generating {args.n_sims} training simulations ===")

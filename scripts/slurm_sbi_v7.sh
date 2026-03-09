@@ -1,0 +1,33 @@
+#!/bin/bash
+#SBATCH --job-name=sbi_v7
+#SBATCH --partition=scu-cpu
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=64G
+#SBATCH --time=12:00:00
+#SBATCH --output=logs/sbi_v7_%j.out
+#SBATCH --error=logs/sbi_v7_%j.err
+
+set -eo pipefail
+HISTCONTROL=ignoredups
+export HISTCONTROL
+source /etc/profile
+module load anaconda3/2023.09-3
+source activate luad_abm
+pip install --quiet mesa h5py sbi torch 2>/dev/null || true
+
+export PYTHONUNBUFFERED=1
+
+cd ~/LungCancerSim2/gaglia_abm
+
+echo "=== SBI v7 (18 params, +cd8_kill_prolif_prob): $(date) ==="
+
+python runs/bayesian_inference.py \
+    --n-sims 2000 \
+    --workers 15 \
+    --out ../outputs/bayesian_inference_v7 \
+    --data ../data/gaglia_2023/gaglia_summary_stats.csv \
+    --n-posterior 10000
+
+echo "=== Done: $(date) ==="
