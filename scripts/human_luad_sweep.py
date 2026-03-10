@@ -308,7 +308,7 @@ def make_figure(results: dict, patients: list[dict], n_seeds: int, out_dir: Path
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     fig.suptitle(
         "Human LUAD vs KP Mouse: Immunotherapy Response\n"
-        f"KP-calibrated parameters (v6 posterior mean), {n_seeds} seeds/condition, "
+        f"KP-calibrated parameters ({len(PARAM_NAMES)}-param posterior mean), {n_seeds} seeds/condition, "
         f"1-week pulse at wk 7, measured wk 9",
         fontsize=12, fontweight="bold",
     )
