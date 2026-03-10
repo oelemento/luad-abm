@@ -10,7 +10,7 @@
 | H4 | Anti-PD1/IL-15 fusion (SAR445877) outperforms PD1+CTLA4 combo by expanding CD8 pool in situ | **Supported** — PD1/IL-15 (−13.6%) >> PD1+CTLA4 combo (−4.1%), CD8 count 1248 vs 1133 | same as H2 | same as H2 |
 | H5 | Triple combination (PD1/IL-15 + CTLA4-ADCC) produces synergistic tumor control | **Not supported** (additive, not synergistic) — −14.6% vs −13.6% for PD1/IL-15 alone | same as H2 | same as H2 |
 | H6 | Human LUAD tumors initialized from patient CyCIF data respond better to ICB than KP mice, due to more favorable CD8:Treg ratio (4.49 vs 2.65) and higher immune activation potential | **Partially supported** — immune-hot patients (CD8:Treg > 5) respond dramatically better; immune-cold patients (CD8:Treg < 2) respond worse. CD8:Treg ratio predicts response. | `outputs/human_luad_sweep_v2/human_luad_sweep.png` | `scripts/human_luad_sweep.py` |
-| H7 | Antigen-driven CD8 clonal expansion (kill-triggered proliferation) fixes the ABM's underestimation of response in high-ratio/low-CD8 patients | Pending — running on Cayuga | `outputs/human_luad_killprolif/` | `scripts/human_luad_sweep.py --kill-prolif 0.5` |
+| H7 | Antigen-driven CD8 clonal expansion (kill-triggered proliferation) fixes the ABM's underestimation of response in high-ratio/low-CD8 patients | Pending — SBI v7 complete, v3 sweep running | `outputs/human_luad_sweep_v3/` | `scripts/human_luad_sweep.py` (with v7 posterior) |
 
 ---
 
@@ -124,6 +124,49 @@ The ABM predicts response is a 2D function of CD8:Treg ratio AND absolute CD8 fr
 **Potential model fix**: Add antigen-driven CD8 proliferation — CD8s that successfully kill a tumor cell get a proliferation bonus (binary fission into the cleared grid square). This would make small numbers of unsuppressed CD8s more effective, consistent with the clinical observation. The current model has CD8 proliferation controlled by `cd8_prolif_rate` (SBI-fitted ~0.04/tick) gated on empty neighbors. An antigen-driven term could add a second proliferation pathway: `if killed_tumor: spawn_daughter_in_cleared_spot()`. This is biologically motivated by clonal expansion upon TCR engagement.
 
 Figure: `outputs/human_luad_sweep_v2/sorin_2d_biomarker.png`
+
+---
+
+## 2026-03-10: SBI v7 — Joint inference with cd8_kill_prolif_prob (18 params)
+
+### Motivation
+
+The kill-prolif sweep (kp=0.0 to 0.3) showed that bolting on any non-zero `cd8_kill_prolif_prob` without recalibrating all other parameters causes universal tumor clearance. Even kp=0.05 dropped untreated KP_mouse tumor from 1682→525. The parameter interacts strongly with `cd8_base_kill`, `tumor_proliferation_rate`, and other dynamics — it cannot be tuned independently. Therefore we added it as the 18th SBI-inferred parameter with prior [0, 0.15].
+
+### Results
+
+SBI v7 completed (2000 sims, 26h runtime, job 2701060). SNPE inference converged. Posterior summary:
+
+| Parameter | Mean | 95% CI | Prior |
+|-----------|------|--------|-------|
+| cd8_base_kill | 0.653 | [0.356, 0.877] | [0.02, 0.90] |
+| cd8_exhaustion_rate | 0.035 | [0.004, 0.072] | [0.001, 0.15] |
+| cd8_activation_gain | 0.361 | [0.049, 0.722] | [0.02, 0.80] |
+| tumor_proliferation_rate | 0.198 | [0.125, 0.279] | [0.005, 0.35] |
+| macrophage_suppr_base | 0.282 | [0.083, 0.475] | [0.05, 0.50] |
+| suppressive_background | 0.077 | [0.017, 0.140] | [0.01, 0.15] |
+| immune_base_death_rate | 0.004 | [0.002, 0.007] | [0.0005, 0.025] |
+| recruitment_rate | 0.029 | [0.016, 0.043] | [0.001, 0.05] |
+| treg_suppression | 0.272 | [0.105, 0.429] | [0.08, 0.45] |
+| cd8_exhaustion_death_bonus | 0.010 | [0.007, 0.013] | [0.001, 0.05] |
+| treg_prolif_rate | 0.083 | [0.018, 0.143] | [0.005, 0.15] |
+| treg_death_rate | 0.004 | [0.001, 0.009] | [0.001, 0.03] |
+| mac_tumor_death_rate | 0.080 | [0.017, 0.143] | [0.01, 0.15] |
+| mac_recruit_suppression | 4.771 | [1.345, 7.700] | [0.5, 8.0] |
+| recruit_exhaustion_priming | 0.276 | [0.178, 0.364] | [0.05, 0.60] |
+| mhc_i_induction_rate | 0.056 | [0.013, 0.095] | [0.005, 0.10] |
+| mhc_i_decay_rate | 0.004 | [0.001, 0.007] | [0.0005, 0.01] |
+| **cd8_kill_prolif_prob** | **0.085** | **[0.020, 0.143]** | [0.0, 0.15] |
+
+### Key finding
+
+**`cd8_kill_prolif_prob` converged to 0.085 [0.020, 0.143]** — the Gaglia data supports ~8.5% probability of CD8 clonal expansion per kill. This is well within the prior and far from edges, suggesting a well-identified parameter. The other 17 parameters remained stable compared to v6, indicating the new parameter was absorbed without destabilizing the existing calibration.
+
+Files: `outputs/bayesian_inference_v7/`, `scripts/slurm_sbi_v7.sh`
+
+### Next step
+
+Re-run human LUAD sweep with v7 posterior (all 18 params jointly calibrated) to test whether the 2D biomarker prediction now matches Sorin clinical data. Running as `outputs/human_luad_sweep_v3/`.
 
 ---
 
