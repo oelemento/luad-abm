@@ -62,6 +62,8 @@ def default_params() -> Dict[str, float]:
         "il15_cd8_prolif_rate": 0.0,
         "il15_cd8_survival_factor": 1.0,
         "cd8_kill_prolif_prob": 0.0,
+        # PD1-driven recruitment boost (H8): therapy-triggered, suppression-modulated
+        "pd1_recruit_boost": 0.0,     # peak multiplier on recruitment rate during PD1
     }
 
 
@@ -385,6 +387,27 @@ class LUADModel(mesa.Model):
         initial_tumor = self.preset.initial_agents.get("tumor", 1200)
         tumor_expansion = max(0.0, (n_tumor - initial_tumor) / initial_tumor)
 
+        # PD1-driven recruitment boost (H8): therapy-triggered, suppression-modulated
+        # When PD1 blockade is active, boost CD8 recruitment — but dampen by
+        # average Treg/M2 suppression so high-suppression environments don't
+        # get the full benefit (preserves quadrant structure).
+        pd1_cd8_boost = 1.0
+        if self.active_interventions.get("PD1", False):
+            pd1_peak = self.params.get("pd1_recruit_boost", 0.0)
+            if pd1_peak > 0.0:
+                # Compute average suppression across all CD8 T cells
+                cd8_cells = list(self.iter_agents(AgentType.CD8))
+                if cd8_cells:
+                    from .rules import compute_local_suppression
+                    avg_suppression = sum(
+                        compute_local_suppression(self, c.pos) for c in cd8_cells
+                    ) / len(cd8_cells)
+                else:
+                    avg_suppression = self.params["suppressive_background"]
+                # Boost = peak * (1 - suppression): full boost when unsuppressed,
+                # near zero when heavily suppressed by Tregs/M2
+                pd1_cd8_boost = 1.0 + pd1_peak * (1.0 - avg_suppression)
+
         for cell_key, initial_n in self.preset.initial_agents.items():
             if cell_key == "tumor":
                 continue
@@ -392,6 +415,9 @@ class LUADModel(mesa.Model):
             # Macrophage recruitment declines as tumor burden grows
             if cell_key == "macrophage":
                 cell_rate *= max(0.1, 1.0 - self.params["mac_recruit_suppression"] * tumor_expansion)
+            # Apply PD1 recruitment boost to CD8 only
+            if cell_key == "cd8":
+                cell_rate *= pd1_cd8_boost
             expected = cell_rate * initial_n * boost
             n_new = int(self.np_rng.poisson(expected))
             if n_new <= 0:
