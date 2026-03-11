@@ -10,7 +10,49 @@
 | H4 | Anti-PD1/IL-15 fusion (SAR445877) outperforms PD1+CTLA4 combo by expanding CD8 pool in situ | **Supported** — PD1/IL-15 (−13.6%) >> PD1+CTLA4 combo (−4.1%), CD8 count 1248 vs 1133 | same as H2 | same as H2 |
 | H5 | Triple combination (PD1/IL-15 + CTLA4-ADCC) produces synergistic tumor control | **Not supported** (additive, not synergistic) — −14.6% vs −13.6% for PD1/IL-15 alone | same as H2 | same as H2 |
 | H6 | Human LUAD tumors initialized from patient CyCIF data respond better to ICB than KP mice, due to more favorable CD8:Treg ratio (4.49 vs 2.65) and higher immune activation potential | **Partially supported** — immune-hot patients (CD8:Treg > 5) respond dramatically better; immune-cold patients (CD8:Treg < 2) respond worse. CD8:Treg ratio predicts response. | `outputs/human_luad_sweep_v2/human_luad_sweep.png` | `scripts/human_luad_sweep.py` |
-| H7 | Antigen-driven CD8 clonal expansion (kill-triggered proliferation) fixes the ABM's underestimation of response in high-ratio/low-CD8 patients | Pending — SBI v7 complete, v3 sweep running | `outputs/human_luad_sweep_v3/` | `scripts/human_luad_sweep.py` (with v7 posterior) |
+| H7 | Antigen-driven CD8 clonal expansion (kill-triggered proliferation) fixes the ABM's underestimation of response in high-ratio/low-CD8 patients | **Not supported** — SBI v7 converged (kp=0.085) but 2D biomarker discrepancy persists: high-ratio/low-CD8 still 0% vs 88% clinical | `outputs/human_luad_sweep_v3/v2_v3_sorin_2d_comparison.png` | `scripts/compare_v2_v3_2d_biomarker.py` |
+| H8 | PD1-driven suppression-modulated CD8 recruitment boost fixes high-ratio/low-CD8 discrepancy | Pending | | |
+
+---
+
+## 2026-03-11: H7 result — Kill-prolif alone does NOT fix 2D biomarker discrepancy
+
+### Human LUAD sweep v3 (SBI v7 posterior, 18 params incl cd8_kill_prolif_prob=0.085)
+
+v3 sweep completed (job 2701853, 11h38m). Key results vs v2:
+
+| Config | v2 ΔTumor% (PD1+CTLA4) | v3 ΔTumor% (PD1+CTLA4) | Change |
+|--------|----------------------|----------------------|--------|
+| KP_mouse | −4.1% | −7.2% | improved |
+| CASE7 (ratio 5.97) | −45.0% | −24.6% | weaker (lower baseline tumor) |
+| CASE9 (ratio 4.66) | −22.2% | −17.8% | similar |
+| CASE12 (ratio 3.11) | −2.3% | −2.6% | unchanged |
+| CASE18 (ratio 2.24) | −1.8% | −2.1% | unchanged |
+| CASE14 (ratio 2.04) | — (cleared) | −61.4% | new responder |
+
+### 2D biomarker comparison (v2 vs v3 vs Sorin clinical)
+
+| Quadrant | v2 ABM | v3 ABM | Sorin clinical |
+|----------|--------|--------|---------------|
+| High ratio + High CD8 | 3/4 (75%) | 3/4 (75%) | 15/21 (71%) |
+| **High ratio + Low CD8** | **0/2 (0%)** | **0/2 (0%)** | **7/8 (88%)** |
+| Low ratio + High CD8 | 0/0 (N/A) | 1/1 (100%) | 2/8 (25%) |
+| Low ratio + Low CD8 | 0/5 (0%) | 0/5 (0%) | 12/21 (57%) |
+
+**Conclusion**: Kill-triggered proliferation (p=0.085) does not fix the high-ratio/low-CD8 discrepancy. The mechanism has the same bootstrap failure as the original model — patients with few CD8s rarely achieve enough initial kills for proliferation to compound. The low-ratio/low-CD8 quadrant (0% vs 57%) also remains discrepant.
+
+### Diagnosis (consensus from Claude + Codex)
+
+The fundamental problem: the ABM's PD1 blockade only enhances per-contact killing. But clinical responses in low-CD8 patients require **new CD8 influx** from extratumoral reservoirs (lymph nodes, TLS), which is kill-independent and therapy-triggered (Yost 2019, Siddiqui 2019, Tumeh 2014). Both kill-prolif and kill-driven recruitment fail because they require the first kills to happen.
+
+**Proposed fix (H8)**: PD1-driven suppression-modulated CD8 recruitment boost:
+- During PD1 blockade, multiply `recruitment_rate` by a therapy-induced factor
+- Crucially, dampen the boost by local Treg/M2 suppression — this preserves quadrant structure:
+  - High ratio + low CD8 → low suppression → full recruitment boost → responds
+  - Low ratio + low CD8 → high suppression → dampened boost → doesn't respond as well
+- SBI-calibrate the boost magnitude and decay as new parameters
+
+Figure: `outputs/human_luad_sweep_v3/v2_v3_sorin_2d_comparison.png`
 
 ---
 
