@@ -11,7 +11,63 @@
 | H5 | Triple combination (PD1/IL-15 + CTLA4-ADCC) produces synergistic tumor control | **Not supported** (additive, not synergistic) — −14.6% vs −13.6% for PD1/IL-15 alone | same as H2 | same as H2 |
 | H6 | Human LUAD tumors initialized from patient CyCIF data respond better to ICB than KP mice, due to more favorable CD8:Treg ratio (4.49 vs 2.65) and higher immune activation potential | **Partially supported** — immune-hot patients (CD8:Treg > 5) respond dramatically better; immune-cold patients (CD8:Treg < 2) respond worse. CD8:Treg ratio predicts response. | `outputs/human_luad_sweep_v2/human_luad_sweep.png` | `scripts/human_luad_sweep.py` |
 | H7 | Antigen-driven CD8 clonal expansion (kill-triggered proliferation) fixes the ABM's underestimation of response in high-ratio/low-CD8 patients | **Not supported** — SBI v7 converged (kp=0.085) but 2D biomarker discrepancy persists: high-ratio/low-CD8 still 0% vs 88% clinical | `outputs/human_luad_sweep_v3/v2_v3_sorin_2d_comparison.png` | `scripts/compare_v2_v3_2d_biomarker.py` |
-| H8 | PD1-driven suppression-modulated CD8 recruitment boost fixes high-ratio/low-CD8 discrepancy | Pending | | |
+| H8 | PD1-driven suppression-modulated CD8 recruitment boost fixes high-ratio/low-CD8 discrepancy | Pending — SBI v8 complete (pd1_recruit_boost=1.82), v4 sweep running | `outputs/human_luad_sweep_v4/` | `scripts/human_luad_sweep.py` (with v8 posterior) |
+
+---
+
+## 2026-03-12: SBI v8 — Joint inference with pd1_recruit_boost (19 params)
+
+### Motivation
+
+H7 showed that kill-triggered proliferation alone cannot fix the high-ratio/low-CD8 discrepancy. Both Claude and Codex (consulted independently) agreed: the fundamental problem is that the ABM's PD1 blockade only enhances per-contact killing. Clinical responses in low-CD8 patients require **new CD8 influx** from extratumoral reservoirs, which is kill-independent and therapy-triggered (Yost 2019, Siddiqui 2019, Tumeh 2014).
+
+Key design: the recruitment boost is **damped by local Treg/M2 suppression**. This preserves quadrant structure:
+- High ratio + low CD8 → low suppression → full boost → should respond
+- Low ratio + low CD8 → high suppression → dampened boost → shouldn't respond as well
+
+### Results
+
+SBI v8 completed (2000 sims, 26.5h runtime, job 2702064). Posterior summary:
+
+| Parameter | v8 Mean | v8 95% CI | v7 Mean | Prior |
+|-----------|---------|-----------|---------|-------|
+| cd8_base_kill | 0.573 | [0.315, 0.826] | 0.653 | [0.02, 0.90] |
+| cd8_exhaustion_rate | 0.031 | [0.004, 0.063] | 0.035 | [0.001, 0.15] |
+| cd8_activation_gain | 0.387 | [0.070, 0.721] | 0.361 | [0.02, 0.80] |
+| tumor_proliferation_rate | 0.250 | [0.143, 0.340] | 0.198 | [0.005, 0.35] |
+| macrophage_suppr_base | 0.263 | [0.070, 0.469] | 0.282 | [0.05, 0.50] |
+| suppressive_background | 0.078 | [0.017, 0.141] | 0.077 | [0.01, 0.15] |
+| immune_base_death_rate | 0.002 | [0.001, 0.005] | 0.004 | [0.0005, 0.025] |
+| recruitment_rate | 0.021 | [0.008, 0.035] | 0.029 | [0.001, 0.05] |
+| treg_suppression | 0.267 | [0.101, 0.431] | 0.272 | [0.08, 0.45] |
+| cd8_exhaustion_death_bonus | 0.007 | [0.002, 0.011] | 0.010 | [0.001, 0.05] |
+| treg_prolif_rate | 0.093 | [0.027, 0.145] | 0.083 | [0.005, 0.15] |
+| treg_death_rate | 0.004 | [0.001, 0.007] | 0.004 | [0.001, 0.03] |
+| mac_tumor_death_rate | 0.078 | [0.017, 0.142] | 0.080 | [0.01, 0.15] |
+| mac_recruit_suppression | 3.999 | [0.816, 7.519] | 4.771 | [0.5, 8.0] |
+| recruit_exhaustion_priming | 0.234 | [0.088, 0.383] | 0.276 | [0.05, 0.60] |
+| mhc_i_induction_rate | 0.054 | [0.011, 0.095] | 0.056 | [0.005, 0.10] |
+| mhc_i_decay_rate | 0.004 | [0.001, 0.007] | 0.004 | [0.0005, 0.01] |
+| cd8_kill_prolif_prob | 0.076 | [0.011, 0.139] | 0.085 | [0.0, 0.15] |
+| **pd1_recruit_boost** | **1.821** | **[0.193, 3.884]** | — | [0.0, 10.0] |
+
+### Key findings
+
+1. **`pd1_recruit_boost = 1.82 [0.19, 3.88]`** — well-identified, non-zero. During PD1 blockade in a low-suppression environment, CD8 recruitment rate is ~2.8× baseline (1 + 1.82 × (1 - suppression)). In high-suppression environments, the boost is dampened.
+
+2. **`recruitment_rate` dropped from 0.029 → 0.021** — the model compensated for the new PD1 boost by lowering baseline recruitment, maintaining calibration to untreated controls.
+
+3. **`tumor_proliferation_rate` increased from 0.198 → 0.250** — with stronger immune response during treatment, the model needs faster tumor growth to match untreated tumor counts.
+
+4. **`cd8_base_kill` dropped from 0.653 → 0.573** — with more CD8s arriving during treatment (via recruitment boost), each individual kill doesn't need to be as efficient.
+
+5. **`cd8_kill_prolif_prob` stable at 0.076** (was 0.085 in v7) — both mechanisms coexist.
+
+Files: `outputs/bayesian_inference_v8/`, `scripts/slurm_sbi_v8.sh`
+
+### Next step
+
+LUAD v4 sweep running (job 2702376) with v8 posterior. Will test whether the suppression-modulated recruitment boost fixes the 2D biomarker discrepancy.
 
 ---
 
