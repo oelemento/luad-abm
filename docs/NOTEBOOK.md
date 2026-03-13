@@ -11,7 +11,45 @@
 | H5 | Triple combination (PD1/IL-15 + CTLA4-ADCC) produces synergistic tumor control | **Not supported** (additive, not synergistic) — −14.6% vs −13.6% for PD1/IL-15 alone | same as H2 | same as H2 |
 | H6 | Human LUAD tumors initialized from patient CyCIF data respond better to ICB than KP mice, due to more favorable CD8:Treg ratio (4.49 vs 2.65) and higher immune activation potential | **Partially supported** — immune-hot patients (CD8:Treg > 5) respond dramatically better; immune-cold patients (CD8:Treg < 2) respond worse. CD8:Treg ratio predicts response. | `outputs/human_luad_sweep_v2/human_luad_sweep.png` | `scripts/human_luad_sweep.py` |
 | H7 | Antigen-driven CD8 clonal expansion (kill-triggered proliferation) fixes the ABM's underestimation of response in high-ratio/low-CD8 patients | **Not supported** — SBI v7 converged (kp=0.085) but 2D biomarker discrepancy persists: high-ratio/low-CD8 still 0% vs 88% clinical | `outputs/human_luad_sweep_v3/v2_v3_sorin_2d_comparison.png` | `scripts/compare_v2_v3_2d_biomarker.py` |
-| H8 | PD1-driven suppression-modulated CD8 recruitment boost fixes high-ratio/low-CD8 discrepancy | Pending — SBI v8 complete (pd1_recruit_boost=1.82), v4 sweep running | `outputs/human_luad_sweep_v4/` | `scripts/human_luad_sweep.py` (with v8 posterior) |
+| H8 | PD1-driven suppression-modulated CD8 recruitment boost fixes high-ratio/low-CD8 discrepancy | **Partially supported** — improves some patients but high-ratio/low-CD8 still 0% vs 88% clinical. CASE12/CASE18 tumor burden too high for recruitment alone. | `outputs/human_luad_sweep_v4/v2_v3_v4_sorin_2d_comparison.png` | `scripts/compare_v2_v3_2d_biomarker.py` |
+
+---
+
+## 2026-03-12: H8 result — PD1 recruitment boost partially helps but doesn't fix key discrepancy
+
+### Human LUAD sweep v4 (SBI v8 posterior, 19 params incl pd1_recruit_boost=1.82)
+
+v4 sweep completed (job 2702376, 11h29m). 2D biomarker comparison:
+
+| Quadrant | v2 ABM | v3 ABM | v4 ABM | Sorin clinical |
+|----------|--------|--------|--------|---------------|
+| High ratio + High CD8 | 3/4 (75%) | 3/4 (75%) | 4/5 (80%) | 15/21 (71%) |
+| **High ratio + Low CD8** | **0/2 (0%)** | **0/2 (0%)** | **0/2 (0%)** | **7/8 (88%)** |
+| Low ratio + High CD8 | 0/0 (N/A) | 1/1 (100%) | 2/2 (100%) | 2/8 (25%) |
+| Low ratio + Low CD8 | 0/5 (0%) | 0/5 (0%) | 0/5 (0%) | 12/21 (57%) |
+
+### What improved
+
+- CASE19 and CASE21 now have non-zero untreated tumors (125, 71) so can be classified — both respond strongly (−42.6%, −43.1%)
+- CASE14 responds (−17.5%) in low-ratio/high-CD8 quadrant
+- High-ratio/high-CD8 went from 75% → 80% (CASE19 now classifiable)
+- KP_mouse: PD1+CTLA4 treatment now shows boosted CD8 counts (2011 vs 1680 untreated), confirming the recruitment mechanism is active
+
+### What didn't change
+
+- **CASE12 (−3.3%) and CASE18 (−1.7%)** in high-ratio/low-CD8 still don't respond. These have massive tumor burden (5074, 7479) relative to CD8 counts (1628, 1040). Even 2.8× recruitment can't overcome the tumor mass when baseline CD8 density is so low.
+- Low-ratio/low-CD8 still 0/5 (0%) vs 57% clinical — this quadrant likely requires tumor-intrinsic heterogeneity (antigenicity, MHC-I, IFN responsiveness) that the ABM doesn't model.
+
+### Diagnosis
+
+The recruitment boost correctly increases CD8 influx during PD1 blockade (visible in CD8 counts: KP PD1+CTLA4 now 2011 vs 1680 untreated). But for CASE12/CASE18, the fundamental problem is the tumor-to-immune ratio: these patients have 3-7× more tumor cells than CD8s. Even doubling the CD8 recruitment rate doesn't produce enough killing to dent a tumor mass of 5000-7500 cells on a 10,000-cell grid.
+
+The clinical reality (88% response in this quadrant) suggests mechanisms beyond just recruitment:
+1. **Tumor-intrinsic vulnerability**: High-ratio/low-CD8 may correlate with high neoantigen burden or IFN responsiveness — the few CD8s present are tumor-reactive and effective
+2. **Spatial organization**: Clinical CD8s concentrate at the invasive margin, not scattered randomly; margin-seeded CD8s would have immediate tumor contact
+3. **Lymph node compartment**: The extratumoral T cell reservoir is orders of magnitude larger than the intratumoral pool; our 2.8× boost may dramatically underestimate the true influx
+
+Figure: `outputs/human_luad_sweep_v4/v2_v3_v4_sorin_2d_comparison.png`
 
 ---
 

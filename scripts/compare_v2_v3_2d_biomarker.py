@@ -52,9 +52,11 @@ def main():
 
     v2_path = ROOT / "outputs/human_luad_sweep_v2/human_luad_results.npz"
     v3_path = ROOT / "outputs/human_luad_sweep_v3/human_luad_results.npz"
+    v4_path = ROOT / "outputs/human_luad_sweep_v4/human_luad_results.npz"
 
     results_v2 = load_sweep_results(v2_path)
     results_v3 = load_sweep_results(v3_path)
+    results_v4 = load_sweep_results(v4_path)
 
     # Patient features
     names = [pt["name"] for pt in patients]
@@ -74,6 +76,7 @@ def main():
     for version, results, label in [
         ("v2", results_v2, "v2 (17-param, no kill-prolif)"),
         ("v3", results_v3, "v3 (18-param, kill-prolif=0.085)"),
+        ("v4", results_v4, "v4 (19-param, +pd1_recruit_boost=1.82)"),
     ]:
         print(f"=== {label} ===")
         quadrants = {
@@ -121,14 +124,15 @@ def main():
     print()
 
     # --- Figure ---
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    fig.suptitle("2D Biomarker: ABM v2 vs v3 vs Sorin Clinical Data\n"
+    fig, axes = plt.subplots(1, 4, figsize=(24, 6))
+    fig.suptitle("2D Biomarker: ABM v2 vs v3 vs v4 vs Sorin Clinical Data\n"
                  "Quadrants split at median CD8:Treg ratio and CD8 fraction",
                  fontsize=12, fontweight="bold")
 
-    for ax_idx, (version, results, title) in enumerate([
+    for ax_idx, (_, results, title) in enumerate([
         ("v2", results_v2, "ABM v2 (no kill-prolif)"),
         ("v3", results_v3, "ABM v3 (kill-prolif=0.085)"),
+        ("v4", results_v4, "ABM v4 (+recruit boost=1.82)"),
     ]):
         ax = axes[ax_idx]
         for i, name in enumerate(names):
@@ -149,12 +153,8 @@ def main():
         ax.set_ylabel("CD8 fraction")
         ax.set_title(title)
 
-        # Add quadrant labels
-        xmin, xmax = ax.get_xlim()
-        ymin, ymax = ax.get_ylim()
-
-    # Panel 3: Sorin clinical (schematic)
-    ax = axes[2]
+    # Panel 4: Sorin clinical (schematic)
+    ax = axes[3]
     sorin_quadrants = {
         "High ratio\nHigh CD8": (0.75, 0.75, "15/21\n71%"),
         "High ratio\nLow CD8": (0.75, 0.25, "7/8\n88%"),
@@ -181,7 +181,7 @@ def main():
     ax.set_yticks([])
 
     plt.tight_layout(rect=[0, 0, 1, 0.90])
-    out_path = ROOT / "outputs/human_luad_sweep_v3/v2_v3_sorin_2d_comparison.png"
+    out_path = ROOT / "outputs/human_luad_sweep_v4/v2_v3_v4_sorin_2d_comparison.png"
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"Saved: {out_path}")
 
